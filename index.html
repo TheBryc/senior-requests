@@ -242,6 +242,12 @@
   }
   .pill-ok{background:var(--ok-bg);color:var(--ok-ink);}
   .pill-pending{background:var(--pending-bg);color:var(--pending-ink);}
+  .pill-declined{background:var(--warn-bg);color:var(--warn-ink);}
+  .declined-box{margin-top:14px;padding:14px 16px;border-radius:10px;background:var(--warn-bg);color:var(--ink);
+    border-left:4px solid var(--warn-ink);}
+  .declined-box .hdr{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;
+    color:var(--warn-ink);margin-bottom:6px;}
+  .declined-box .body{font-size:13.5px;line-height:1.6;}
   .chev{color:var(--muted);font-size:12px;transition:transform .18s;}
   .req-card.open .chev{transform:rotate(180deg);}
   .req-body{padding:4px 16px 16px;background:var(--page-bg);border-top:1px solid var(--border);}
@@ -559,6 +565,25 @@
     padding:9px 16px;font-size:13px;font-weight:700;white-space:nowrap;}
 #staff .btn-done:hover{background:var(--mid-teal);}
 #staff .btn-done:disabled{opacity:.5;}
+#staff .qrow.closed{opacity:.85;border-style:dashed;background:var(--page-bg);}
+#staff .qcant{background:none;border:none;color:var(--warn-ink);font-size:12px;text-decoration:underline;padding:4px 0;}
+#staff .req-badge.bad{background:var(--warn-bg);color:var(--warn-ink);}
+#staff .decline-panel{margin-top:14px;border:1px solid var(--border);border-left:4px solid var(--warn-ink);
+    border-radius:8px;padding:12px 14px;background:#fff;}
+#staff .decline-panel .dp-title{font-weight:700;font-size:13px;color:var(--ink);}
+#staff .decline-panel .dp-help{font-size:12px;color:var(--muted);margin:3px 0 8px;line-height:1.45;}
+#staff .fld-decline-reason{width:100%;border:1px solid var(--border);border-radius:6px;padding:8px 10px;
+    font-size:13px;font-family:inherit;resize:vertical;}
+#staff .decline-panel .dp-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px;}
+#staff .btn-decline{background:var(--warn-ink);color:#fff;border:none;border-radius:8px;padding:9px 14px;
+    font-size:13px;font-weight:700;}
+#staff .btn-decline:disabled{opacity:.5;}
+#staff .btn-remove{background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;
+    padding:8px 12px;font-size:12.5px;font-weight:600;}
+#staff .btn-reopen{background:#fff;border:1px solid var(--mid-teal);color:var(--mid-teal);border-radius:8px;
+    padding:8px 14px;font-size:13px;font-weight:600;white-space:nowrap;}
+#staff .decline-panel .dp-error{color:var(--warn-ink);font-size:12px;margin-top:6px;display:none;}
+#staff .reason-text{font-size:13px;color:var(--ink);max-width:520px;line-height:1.5;}
 #staff .qexpand{background:none;border:none;color:var(--mid-teal);font-size:12px;
     text-decoration:underline;padding:4px 0;}
 #staff .qdetails{flex:1 1 100%;border-top:1px dashed var(--border);margin-top:4px;padding-top:10px;}
@@ -621,6 +646,7 @@
     <label class="toggle-row" style="margin-left:0;"><input type="checkbox" id="email-students" checked /> Email students on changes</label>
     <label class="toggle-row" id="mine-only-wrap" style="display:none;margin-left:0;"><input type="checkbox" id="mine-only" checked /> <span id="mine-only-label">Only my students</span></label>
     <label class="toggle-row"><input type="checkbox" id="unfulfilled-only" checked /> Show unfulfilled only</label>
+    <label class="toggle-row" style="margin-left:0;" title="Removed requests are hidden from everything, including the student's portal. Tick this to bring one back."><input type="checkbox" id="show-removed" /> Show removed</label>
     <span class="count-note" id="count-note"></span>
     <button id="refresh-btn" class="filter-tab" title="Re-read the tracker and the attendance sheet">&#8635; Refresh</button>
     <button id="export-requests" class="filter-tab" style="margin-left:auto;" title="One row per request — what was asked for, and who applied to a partner school">Export requests (CSV)</button>
@@ -1309,6 +1335,8 @@ function attendancePanelHtml(d){
 /* ---------------------- request progress + guidance ---------------------- */
 
 const CANONICAL_STAGES = ["Received", "In review", "Approved", "Complete"];
+// A request BRYC could not complete. The reason a counselor wrote arrives in r.message.
+const DECLINED_STAGE = "Unable to fulfill";
 
 function trailHtml(r){
   // The final step reads "Paid" for the requests BRYC actually pays money for,
@@ -1390,11 +1418,12 @@ function requestsPanelHtml(d){
   h += reqs.map(function(r, i){
     const open = openReq === i;
     const complete = r.stage === "Complete" || r.fulfilled;
+    const declined = r.stage === DECLINED_STAGE && !r.fulfilled;
     return '<div class="req-card' + (open ? " open" : "") + '">'
       + '<div class="req-head" data-req="' + i + '">'
       +   '<div class="txt"><div class="req-type">' + escapeHtml(titleCase(r.friendlyType || r.type)) + "</div>"
       +   '<div class="req-date">Received ' + escapeHtml(r.submittedLong || r.submitted || "recently") + "</div></div>"
-      +   '<span class="pill ' + (complete ? "pill-ok" : "pill-pending") + '">'
+      +   '<span class="pill ' + (complete ? "pill-ok" : declined ? "pill-declined" : "pill-pending") + '">'
       +     escapeHtml(complete ? (r.isPayment ? "Paid" : "Fulfilled") : r.stage) + "</span>"
       +   '<span class="chev">&#9660;</span>'
       + "</div>"
@@ -1407,6 +1436,22 @@ function requestsPanelHtml(d){
 
 function requestBodyHtml(r){
   const complete = r.stage === "Complete" || r.fulfilled;
+
+  // Not completed, and never going to be as submitted: say so plainly, with the
+  // counselor's reason, instead of drawing a progress trail that implies waiting.
+  if(r.stage === DECLINED_STAGE && !r.fulfilled){
+    let d = '<div class="declined-box"><div class="hdr">BRYC wasn\'t able to complete this request</div>'
+      + '<div class="body">' + (r.message
+          ? escapeHtml(r.message)
+          : "Talk with your BRYC counselor or advisor to find out why.") + "</div></div>";
+    if(r.isPayment){
+      d += '<div class="next-step"><b>Your senior funds</b>Nothing was taken out of your senior funds for this request.</div>';
+    }
+    d += '<div class="next-step"><b>What you can do</b>Talk with your BRYC counselor or advisor about next steps. '
+      + "You can also submit a new request anytime.</div>";
+    return d + detailsHtml(r);
+  }
+
   let h = trailHtml(r);
 
   if(!complete){
@@ -1675,6 +1720,11 @@ const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbymyYS88tLegXCZ
 // columns the form itself produced. Must match STAGE_COLUMNS in the Apps Script.
 const TRACKING_COLUMNS = ["Fulfilled", "Notes", "Stage", "Message to Student"];
 const STAGES = ["Received", "In review", "Approved", "Complete"];
+// Two more values end a request without completing it. They are NOT in the Stage
+// dropdown -- they're set by the "Can't fulfill" and "Remove" actions only.
+const STAGE_UNABLE = "Unable to fulfill";
+const STAGE_REMOVED = "Removed";
+const ALL_STAGES = STAGES.concat([STAGE_UNABLE, STAGE_REMOVED]);
 const STALE_DAYS = 7;
 
 // The weekly attendance workbook, used here as the Fellow ROSTER: anyone on it
@@ -1785,6 +1835,7 @@ let feeLayout = null;     // where the columns and triplets are
 let activeFilter = "all";
 let searchTerm = "";
 let unfulfilledOnly = true;
+let showRemoved = false;
 let openRowIndex = null;
 let viewMode = "queue";
 let emailStudents = true;
@@ -2038,8 +2089,10 @@ function colLetter(i){
  * Fire-and-forget call into the Apps Script Web App to email a student. The
  * script re-verifies this counselor's Google identity before sending.
  */
-function notifyStudent(sheetRow, kind){
-  if(!emailStudents) return Promise.resolve(null);
+function notifyStudent(sheetRow, kind, force){
+  // `force` is for "Can't fulfill": a counselor who just confirmed the email
+  // shouldn't have it silently skipped by a bulk-cleanup toggle.
+  if(!emailStudents && !force) return Promise.resolve(null);
   if(!APPS_SCRIPT_URL || APPS_SCRIPT_URL.indexOf("PASTE_YOUR") === 0) return Promise.resolve(null);
   return new Promise(function(resolve){
     const cb = "bryc_notify_" + Date.now() + "_" + Math.floor(Math.random() * 10000);
@@ -2309,7 +2362,7 @@ function provisionRosterFunds(){
 
 /** Roster seniors who have never submitted a request. */
 function computeRosterOnly(){
-  const requested = new Set(responses.map(function(r){ return nameKey(r.name); }).filter(Boolean));
+  const requested = new Set(liveResponses().map(function(r){ return nameKey(r.name); }).filter(Boolean));
   rosterOnly = roster.filter(function(p){ return !requested.has(p.key); }).map(function(p){
     const f = feeRows.find(function(x){ return nameKey(x.name) === p.key; });
     return { rosterOnly: true, name: p.name, key: p.key, percent: p.percent,
@@ -2407,10 +2460,19 @@ function rowToResponse(row, sheetRow){
   r.fulfilled = String(g("Fulfilled") || "").toUpperCase() === "TRUE";
   r.notes = g("Notes") || "";
   const rawStage = String(g("Stage") || "").trim();
-  r.stage = STAGES.indexOf(rawStage) > -1 ? rawStage : (r.fulfilled ? "Complete" : "Received");
+  r.stage = ALL_STAGES.indexOf(rawStage) > -1 ? rawStage : (r.fulfilled ? "Complete" : "Received");
   r.messageToStudent = g("Message to Student") || "";
   return r;
 }
+
+/* ---- request status helpers ----
+ * "Open" = still waiting on staff. Declined and removed requests are finished
+ * (not fulfilled), so they must not count as outstanding, and removed ones
+ * disappear from every count and list unless "Show removed" is ticked. */
+function isRemoved(r){ return r.stage === STAGE_REMOVED; }
+function isDeclined(r){ return r.stage === STAGE_UNABLE && !r.fulfilled; }
+function isOpenReq(r){ return !r.fulfilled && !isDeclined(r) && !isRemoved(r); }
+function liveResponses(){ return responses.filter(function(r){ return !isRemoved(r); }); }
 
 /** A1 range covering this row's four tracking columns, wherever they landed. */
 function trackingRange(sheetRow){
@@ -2482,7 +2544,8 @@ function renderComms(){
 function renderFilterTabs(){
   const el = document.getElementById("filter-tabs");
   el.innerHTML = FILTERS.map(function(f){
-    const count = f.key === "all" ? responses.length : responses.filter(function(r){ return filterKeyOf(r) === f.key; }).length;
+    const live = liveResponses();
+    const count = f.key === "all" ? live.length : live.filter(function(r){ return filterKeyOf(r) === f.key; }).length;
     return `<button class="filter-tab${f.key === activeFilter ? " active" : ""}" data-filter="${f.key}">${f.label} (${count})</button>`;
   }).join("");
   el.querySelectorAll(".filter-tab").forEach(function(btn){
@@ -2497,7 +2560,10 @@ function renderFilterTabs(){
 function visibleList(){
   let list = responses.slice().reverse(); // newest first
   if(activeFilter !== "all") list = list.filter(function(r){ return filterKeyOf(r) === activeFilter; });
-  if(unfulfilledOnly) list = list.filter(function(r){ return !r.fulfilled; });
+  list = list.filter(function(r){
+    if(isRemoved(r)) return showRemoved;          // only when asked for
+    return unfulfilledOnly ? isOpenReq(r) : true;
+  });
   if(mineOnly){
     const mine = counselorLabelFor(userEmail);
     if(mine) list = list.filter(function(r){ return String(r.counselor || "").trim() === mine; });
@@ -2533,8 +2599,8 @@ function renderSummary(){
   // what's on screen. Untick "only my students" for the cohort view.
   const mine = mineOnly ? counselorLabelFor(userEmail) : null;
   const scoped = mine
-    ? responses.filter(function(r){ return String(r.counselor || "").trim() === mine; })
-    : responses;
+    ? liveResponses().filter(function(r){ return String(r.counselor || "").trim() === mine; })
+    : liveResponses();
 
   const scopedKeys = new Set();
   scoped.forEach(function(r){
@@ -2547,7 +2613,7 @@ function renderSummary(){
     ? feeRows.filter(function(f){ return scopedKeys.has(f.email) || scopedKeys.has(nameKey(f.name)); })
     : feeRows;
 
-  const outstanding = scoped.filter(function(r){ return !r.fulfilled; });
+  const outstanding = scoped.filter(isOpenReq);
   const dueSoon = outstanding.filter(function(r){
     const d = daysUntilDeadline(r);
     return d !== null && d <= STALE_DAYS;
@@ -2582,7 +2648,7 @@ function render(){
   const container = document.getElementById("list");
   if(!list.length){
     container.innerHTML = '<div class="empty-state">Nothing here. ' +
-      (unfulfilledOnly ? "Everything in this filter is fulfilled." : "No requests match this view.") + "</div>";
+      (unfulfilledOnly ? "Nothing here is waiting on you." : "No requests match this view.") + "</div>";
     return;
   }
 
@@ -2613,6 +2679,7 @@ function render(){
 
 /* ---------- queue: one row, everything actionable inline ---------- */
 function queueRowHtml(r){
+  if(isDeclined(r) || isRemoved(r)) return closedRowHtml(r);
   const age = ageInDays(r);
   const due = daysUntilDeadline(r);
   const showAmount = isFeeBearing(r);
@@ -2660,8 +2727,9 @@ function queueRowHtml(r){
         ? '<input type="number" step="0.01" class="fld-amount" placeholder="Amount" value="' + escapeHtml(defaultAmountFor(r)) + '" />'
         : "")
     + '<button class="btn-done" data-sheetrow="' + r.sheetRow + '">Mark done</button>'
+    + (r.fulfilled ? "" : '<button class="qcant" data-sheetrow="' + r.sheetRow + '" title="Tell the fellow why this can\'t be done, or remove it">Can\'t fulfill</button>')
     + '<button class="qexpand" data-expand="' + r.sheetRow + '">' + (isOpen ? "Hide" : "Details") + "</button>"
-    + (isOpen ? '<div class="qdetails">' + detailGridHtml(r) + messageFieldHtml(r) + "</div>" : "")
+    + (isOpen ? '<div class="qdetails">' + detailGridHtml(r) + messageFieldHtml(r) + declinePanelHtml(r) + "</div>" : "")
     + "</div>";
 }
 
@@ -2790,6 +2858,192 @@ function messageFieldHtml(r){
     + "</div>";
 }
 
+/* ---------- can't fulfill / remove / reopen ----------
+ * Three ways a request can end without being fulfilled:
+ *   Unable to fulfill  -> the fellow is emailed the counselor's reason and sees it
+ *                         in their portal.
+ *   Removed            -> hidden everywhere, NO email. For duplicates and tests.
+ *   Reopen / Restore   -> puts it back in the queue.
+ * All three are just a write to the Stage / Message columns; the Apps Script's
+ * background sweep picks the change up and sends (or deliberately doesn't). */
+
+function declinePanelHtml(r){
+  if(r.fulfilled || isDeclined(r) || isRemoved(r)) return "";
+  const first = String(r.name || "").trim().split(/\s+/)[0] || "the fellow";
+  return '<div class="decline-panel">'
+    + '<div class="dp-title">Can\'t fulfill this request?</div>'
+    + '<div class="dp-help">Tell ' + escapeHtml(first) + ' why. They\'ll get this reason by email and see it in their portal. '
+    +   'Nothing is paid or taken out of their senior funds.</div>'
+    + '<textarea class="fld-decline-reason" rows="2" placeholder="e.g. This college already waived the application fee, so there\'s nothing to pay."></textarea>'
+    + '<div class="dp-error"></div>'
+    + '<div class="dp-actions">'
+    +   '<button class="btn-decline" data-sheetrow="' + r.sheetRow + '">Email ' + escapeHtml(first) + ' &amp; mark unable to fulfill</button>'
+    +   '<button class="btn-remove" data-sheetrow="' + r.sheetRow + '" title="Hides it everywhere. Nobody is emailed.">Remove request (no email)</button>'
+    + "</div></div>";
+}
+
+/** A request that's declined or removed, shown only when the filters let it through. */
+function closedRowHtml(r){
+  const removed = isRemoved(r);
+  const isOpen = openRowIndex === String(r.sheetRow);
+  return '<div class="qrow closed" data-idx="' + r.sheetRow + '">'
+    + '<div class="qmain">'
+    +   '<div class="qname">' + escapeHtml(r.name || "(no name)") + "</div>"
+    +   '<div class="qmeta">' + escapeHtml(requestTypeOf(r) || "(no type)") + " &middot; " + escapeHtml(r.counselor || "no counselor")
+    +     (!removed && r.messageToStudent ? " &middot; Reason: <i>" + escapeHtml(r.messageToStudent) + "</i>" : "")
+    +   "</div>"
+    + "</div>"
+    + '<span class="qage old">' + escapeHtml(r.stage) + "</span>"
+    + '<button class="btn-reopen" data-sheetrow="' + r.sheetRow + '">' + (removed ? "Restore" : "Reopen") + "</button>"
+    + '<button class="qexpand" data-expand="' + r.sheetRow + '">' + (isOpen ? "Hide" : "Details") + "</button>"
+    + (isOpen ? '<div class="qdetails">' + detailGridHtml(r) + "</div>" : "")
+    + "</div>";
+}
+
+function closedCardHtml(r){
+  const idx = String(r.sheetRow);
+  const isOpen = openRowIndex === idx;
+  const removed = isRemoved(r);
+  return '<div class="req-card fulfilled' + (isOpen ? " open" : "") + '" data-idx="' + idx + '">'
+    + '<div class="req-card-head">'
+    +   '<span class="req-badge">' + escapeHtml(requestTypeOf(r) || "(no type)") + "</span>"
+    +   '<div><div class="rc-name">' + escapeHtml(r.name || "(no name)") + "</div>"
+    +   '<div class="rc-meta">' + escapeHtml(r.timestamp) + " &middot; " + escapeHtml(r.email)
+    +     " &middot; Counselor: " + escapeHtml(r.counselor) + "</div></div>"
+    +   '<span class="spacer"></span><span class="req-badge bad">' + escapeHtml(r.stage) + "</span>"
+    + "</div>"
+    + '<div class="req-card-body">' + detailGridHtml(r)
+    +   '<div class="action-row">'
+    +     (!removed && r.messageToStudent
+          ? '<div class="action-field"><label>Reason the fellow was given</label><div class="reason-text">' + escapeHtml(r.messageToStudent) + "</div></div>"
+          : "")
+    +     '<button class="btn-reopen" data-sheetrow="' + r.sheetRow + '">' + (removed ? "Restore request" : "Reopen request") + "</button>"
+    +   "</div>"
+    + "</div></div>";
+}
+
+function wireStatusButtons(container){
+  container.querySelectorAll(".btn-decline").forEach(function(b){
+    b.addEventListener("click", function(e){ e.stopPropagation(); declineRequest(b.getAttribute("data-sheetrow")); });
+  });
+  container.querySelectorAll(".btn-remove").forEach(function(b){
+    b.addEventListener("click", function(e){ e.stopPropagation(); removeRequest(b.getAttribute("data-sheetrow")); });
+  });
+  container.querySelectorAll(".btn-reopen").forEach(function(b){
+    b.addEventListener("click", function(e){ e.stopPropagation(); reopenRequest(b.getAttribute("data-sheetrow")); });
+  });
+}
+
+/** Internal-notes breadcrumb: what happened, who did it, when. Students never see Notes. */
+function appendNote(notes, what){
+  const who = String(userEmail || "").split("@")[0] || "staff";
+  const when = new Date().toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" });
+  return (notes ? notes + " | " : "") + what + " (" + who + " " + when + ")";
+}
+
+/** Writes Fulfilled / Notes / Stage / Message for one request and mirrors it into memory. */
+function setStatus(r, patch){
+  const range = trackingRange(r.sheetRow);
+  if(!range) return Promise.reject(new Error("Tracking columns are missing — reload the page so they get created."));
+  const next = {
+    fulfilled: patch.fulfilled !== undefined ? patch.fulfilled : r.fulfilled,
+    notes: patch.notes !== undefined ? patch.notes : r.notes,
+    stage: patch.stage,
+    message: patch.message !== undefined ? patch.message : r.messageToStudent
+  };
+  return sheetsUpdate(range, [[next.fulfilled ? "TRUE" : "FALSE", next.notes, next.stage, next.message]])
+    .then(function(){
+      r.fulfilled = next.fulfilled; r.notes = next.notes; r.stage = next.stage; r.messageToStudent = next.message;
+    });
+}
+
+function findRequest(sheetRowStr){
+  const n = Number(sheetRowStr);
+  return responses.find(function(x){ return x.sheetRow === n; }) || null;
+}
+
+function declineRequest(sheetRowStr){
+  const r = findRequest(sheetRowStr);
+  if(!r) return;
+  if(r.fulfilled){ showToast("That request is already fulfilled, so it can't be marked unable to fulfill."); return; }
+  const scope = document.querySelector('[data-idx="' + r.sheetRow + '"]');
+  if(!scope) return;
+  const box = scope.querySelector(".fld-decline-reason");
+  const err = scope.querySelector(".dp-error");
+  const btn = scope.querySelector(".btn-decline");
+  const reason = box ? box.value.trim() : "";
+  const first = String(r.name || "").trim().split(/\s+/)[0] || "the fellow";
+
+  if(!reason){
+    if(err){ err.textContent = "Add a reason first — " + first + " will read it."; err.style.display = "block"; }
+    if(box) box.focus();
+    return;
+  }
+  if(err) err.style.display = "none";
+  if(!window.confirm("Email " + first + " that BRYC can't fulfill this request?\n\nThey will be told:\n\n“" + reason + "”")) return;
+
+  const label = btn ? btn.innerHTML : "";
+  if(btn){ btn.disabled = true; btn.textContent = "Saving…"; }
+
+  setStatus(r, { stage: STAGE_UNABLE, message: reason, fulfilled: false, notes: appendNote(r.notes, "Unable to fulfill") })
+    .then(function(){
+      showToast("Saved. Emailing " + first + "…");
+      renderFilterTabs();
+      render();
+      // force: a counselor who just confirmed this shouldn't have the email
+      // skipped by the bulk-cleanup "Email students" toggle.
+      return notifyStudent(r.sheetRow, "declined", true);
+    })
+    .then(function(res){
+      if(res && res.status === "ok")             showToast(first + " was emailed the reason.");
+      else if(res && res.status === "forbidden") showToast("Saved. " + (res.message || "Your sign-in has expired.") + " BRYC will send the email within 5 minutes.");
+      else if(res && res.status)                 showToast("Saved. " + (res.message || "Email not sent yet") + " — BRYC will retry within 5 minutes.");
+      else                                       showToast("Saved. " + first + " will be emailed within 5 minutes.");
+    })
+    .catch(function(e){
+      if(btn){ btn.disabled = false; btn.innerHTML = label; }
+      showToast(e.message || "Couldn't save that.");
+    });
+}
+
+function removeRequest(sheetRowStr){
+  const r = findRequest(sheetRowStr);
+  if(!r) return;
+  if(r.fulfilled){ showToast("That request was already fulfilled and may have a payment logged, so it can't be removed."); return; }
+  if(!window.confirm("Remove " + (r.name || "this") + "'s request?\n\nIt disappears from the queue and from the fellow's portal. "
+      + "Nobody is emailed. You can bring it back any time with “Show removed”.")) return;
+
+  setStatus(r, { stage: STAGE_REMOVED, fulfilled: false, notes: appendNote(r.notes, "Removed") })
+    .then(function(){
+      computeRosterOnly();      // a removed request no longer counts as "requested"
+      showToast("Removed. Nobody was emailed. Tick “Show removed” to bring it back.");
+      renderFilterTabs();
+      render();
+    })
+    .catch(function(e){ showToast(e.message || "Couldn't remove that."); });
+}
+
+function reopenRequest(sheetRowStr){
+  const r = findRequest(sheetRowStr);
+  if(!r) return;
+  const wasRemoved = isRemoved(r);
+  const first = String(r.name || "").trim().split(/\s+/)[0] || "the fellow";
+
+  // A reopened request clears the old reason, so the portal stops showing a
+  // "couldn't fulfill" note on something that's active again.
+  setStatus(r, { stage: "Received", fulfilled: false, message: wasRemoved ? r.messageToStudent : "",
+                 notes: appendNote(r.notes, wasRemoved ? "Restored" : "Reopened") })
+    .then(function(){
+      if(wasRemoved) computeRosterOnly();
+      showToast(wasRemoved ? "Restored to the queue. Nobody was emailed."
+                           : "Reopened. " + first + " will get a short “back in the queue” email.");
+      renderFilterTabs();
+      render();
+      return wasRemoved ? null : notifyStudent(r.sheetRow, "stage");
+    })
+    .catch(function(e){ showToast(e.message || "Couldn't reopen that."); });
+}
+
 function wireQueue(container){
   container.querySelectorAll(".btn-done").forEach(function(btn){
     btn.addEventListener("click", function(){
@@ -2806,6 +3060,16 @@ function wireQueue(container){
       render();
     });
   });
+  // "Can't fulfill" opens the row and drops the cursor in the reason box.
+  container.querySelectorAll(".qcant").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      openRowIndex = btn.getAttribute("data-sheetrow");
+      render();
+      const box = document.querySelector('[data-idx="' + openRowIndex + '"] .fld-decline-reason');
+      if(box){ box.scrollIntoView({ block: "center" }); box.focus(); }
+    });
+  });
+  wireStatusButtons(container);
 }
 
 /* ---------- full cards ---------- */
@@ -2827,9 +3091,14 @@ function wireCards(container){
   container.querySelectorAll(".req-card-body").forEach(function(body){
     body.addEventListener("click", function(e){ e.stopPropagation(); });
   });
+  wireStatusButtons(container);
 }
 
 function cardHtml(r){
+  return (isDeclined(r) || isRemoved(r)) ? closedCardHtml(r) : openCardHtml(r);
+}
+
+function openCardHtml(r){
   const idx = String(r.sheetRow);
   const isOpen = openRowIndex === idx;
   const type = requestTypeOf(r) || "(no type)";
@@ -2859,6 +3128,7 @@ function cardHtml(r){
     +     '<label class="checkbox-field"><input type="checkbox" class="fld-fulfilled" ' + (r.fulfilled ? "checked" : "") + " /> Fulfilled</label>"
     +   "</div>"
     +   messageFieldHtml(r)
+    +   declinePanelHtml(r)
     +   '<div class="save-note">' + (isFeeBearing(r) ? "Marking this fulfilled logs the amount to the fellow's Spending Log." : "") + "</div>"
     + "</div></div>";
 }
@@ -2873,7 +3143,7 @@ function cardHtml(r){
 /** Fellow context (school, counselor, role) drawn from their own request rows. */
 function fellowContext(){
   const ctx = {};
-  responses.forEach(function(r){
+  liveResponses().forEach(function(r){
     [String(r.email || "").toLowerCase(), nameKey(r.name)].filter(Boolean).forEach(function(k){
       if(ctx[k]) return;
       ctx[k] = { highSchool: r.highSchool || r.capHighSchool || "",
@@ -2896,7 +3166,7 @@ function buildRequestsExport(){
     "Amount requested","Applied to partner school?","Partner school",
     "Stage","Fulfilled"
   ]];
-  responses.slice().sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); })
+  liveResponses().sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); })
     .forEach(function(r){
       const c = ctx[String(r.email || "").toLowerCase()] || ctx[nameKey(r.name)] || {};
       const pct = attendancePctFor(r.name);
@@ -3089,6 +3359,10 @@ window.__staffBoot = function(){
   });
   document.getElementById("unfulfilled-only").addEventListener("change", function(e){
     unfulfilledOnly = e.target.checked;
+    render();
+  });
+  document.getElementById("show-removed").addEventListener("change", function(e){
+    showRemoved = e.target.checked;
     render();
   });
   document.getElementById("email-students").addEventListener("change", function(e){

@@ -47,24 +47,27 @@ const TRACKER_SHEET_ID = '1J56K1q9DrIUC4YiLx_5R9vC3e2uq2KExcl6t1-0VhKw';
 const RESPONSE_SHEET = 'Form Responses';
 const FEE_BALANCE_SHEET = 'Fee Payment Balance';
 
-// Paste the deployed URL of bryc-senior-portal.html here; blank just omits the
-// "check your portal" link from student emails.
-const PORTAL_URL = 'https://thebryc.org/request';
+// Where student emails send people to check their status. Blank omits the link.
+//
+// Deliberately the GitHub Pages address rather than thebryc.org/request: that
+// short link is served as a 301 (permanent) redirect, so any browser that hit
+// it while it pointed at the Class of 2026 form has that destination cached and
+// will keep going there, ignoring the server. Linking the real address means
+// nobody's cache can send them to the wrong year's form.
+const PORTAL_URL = 'https://thebryc.github.io/senior-requests/';
 
 // Display name students see in the "From" line. Mail still sends from whoever
 // owns this script; this only changes the name shown next to the address.
 const SENDER_NAME = 'Ms. Jakia';
 
-// Counselors allowed to use bryc-admin.html and to trigger a student email.
-// Keep in sync with ALLOWED_ADMIN_EMAILS there. Addresses follow BRYC's
-// firstname@thebryc.org pattern -- correct any that differ.
-const ADMIN_EMAILS = [
-  'jakia@thebryc.org',      // runs senior funds
-  'catherine@thebryc.org', 'rachel@thebryc.org', 'tim@thebryc.org',
-  'rhonda@thebryc.org', 'tavidee@thebryc.org', 'richard@thebryc.org',
-  'kirsten@thebryc.org',
-  'aareena@thebryc.org'     // UWorld / MasteryPrep
-];
+// Who may trigger a student email. Any verified BRYC Google account qualifies,
+// which matches what the dashboard already allows: the Staff tab opens for any
+// @thebryc.org sign-in, so a stricter list here only meant shared accounts like
+// college@thebryc.org could read every student's data but never send anything.
+//
+// The check is on the domain AFTER the @, never a plain "ends with", so an
+// address like someone@notthebryc.org cannot slip through.
+const ADMIN_EMAIL_DOMAIN = 'thebryc.org';
 
 // $150 for the ACADEMIC YEAR, the same for every fellow -- not per semester,
 // and no spring reset.
@@ -79,7 +82,12 @@ const ADMIN_EMAILS = [
 const DEFAULT_STARTING_FUNDS = 150;
 
 // Values for the "Stage" tracking column, in order.
-const PORTAL_STAGES = ['Received', 'In review', 'Approved', 'Complete'];
+// Two more values end a request WITHOUT completing it. "Unable to fulfill" is
+// shown to the student with the counselor's reason; "Removed" hides the request
+// everywhere (queue, student portal) and never emails anybody.
+const STAGE_DECLINED = 'Unable to fulfill';
+const STAGE_REMOVED = 'Removed';
+const PORTAL_STAGES = ['Received', 'In review', 'Approved', 'Complete', STAGE_DECLINED, STAGE_REMOVED];
 
 const STAGE_COLUMNS = ['Fulfilled', 'Notes', 'Stage', 'Message to Student'];
 
@@ -94,7 +102,9 @@ const STAGE_COLUMNS = ['Fulfilled', 'Notes', 'Stage', 'Message to Student'];
  * NOTE: this is the FALL sheet -- spring will need a new id/tab. */
 const ATTENDANCE_SHEET_ID = '13j0yKuyPdOx_zdQgzyegD0yiAiuu3BQEVtKEWlJ20yU';
 const ATTENDANCE_TAB = 'Grade 12';       // seniors; other grades have their own tabs
-const ATTENDANCE_HEADER_ROW = 5;         // 1-based
+// The header row is DETECTED, not assumed -- this is only how far down to look
+// for it. The layout has already shifted once (row 5 -> row 6 in Fall 2026).
+const ATTENDANCE_HEADER_SCAN_ROWS = 15;
 const ATTENDANCE_MIN_PERCENT = 80;       // BRYC's 80% requirement
 // The student portal caches the attendance index this long. It is deliberately
 // NOT tiny: rebuilding it opens an external 477-row workbook, and doing that on
@@ -400,6 +410,9 @@ function buildPortalData_(email) {
       const row = rows[i];
       if (map.email === undefined || normalizeEmail_(row[map.email]) !== email) continue;
 
+      // A removed request is gone as far as the student is concerned.
+      if (String(cell_(row, map, '_Stage') || '').trim() === STAGE_REMOVED) continue;
+
       if (!displayName) displayName = str_(row, map, 'name');
       const role = str_(row, map, 'role');
       if (role) roles[role] = true;
@@ -548,7 +561,8 @@ function doGet(e) {
  * calls this endpoint after a successful save instead. Because the Web App is
  * public, the caller is verified here: their live Google OAuth token is checked
  * against Google's own userinfo endpoint and the resulting email must be in
- * ADMIN_EMAILS. The message body is composed from sheet data, never from
+ * a verified @thebryc.org account. The message body is composed from sheet
+ * data, never from
  * anything the caller sends, so this cannot be used to mail arbitrary text.
  * ======================================================================== */
 
@@ -562,6 +576,18 @@ function friendlyType_(type) {
   map[TYPE_PARTNER_WAIVER]  = 'partner school fee waiver request';
   return map[String(type || '').trim()] || 'BRYC support request';
 }
+/** Is this token still valid with Google, regardless of who it belongs to? */
+function googleTokenLive_(accessToken) {
+  const token = String(accessToken || '').trim();
+  if (!token) return false;
+  try {
+    return UrlFetchApp.fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: 'Bearer ' + token },
+      muteHttpExceptions: true
+    }).getResponseCode() === 200;
+  } catch (err) { return false; }
+}
+
 function verifyAdmin_(accessToken) {
   const token = String(accessToken || '').trim();
   if (!token) return null;
@@ -574,7 +600,11 @@ function verifyAdmin_(accessToken) {
     const info = JSON.parse(res.getContentText());
     if (!info.email || String(info.email_verified) !== 'true') return null;
     const email = normalizeEmail_(info.email);
-    return ADMIN_EMAILS.indexOf(email) > -1 ? email : null;
+    const suffix = '@' + ADMIN_EMAIL_DOMAIN;
+    const at = email.length - suffix.length;
+    // at > 0 keeps out both "@thebryc.org" (no local part) and a bare
+    // "thebryc.org" with no @ at all.
+    return at > 0 && email.slice(at) === suffix ? email : null;
   } catch (err) {
     console.error('Admin verification failed: ' + err);
     return null;
@@ -588,7 +618,14 @@ function portalLinkLine_() {
 
 function handleNotifyStudent(e) {
   const admin = verifyAdmin_(e.parameter.adminToken);
-  if (!admin) return { status: 'forbidden' };
+  if (!admin) {
+    // Two very different causes, and telling them apart saves a support round
+    // trip: an expired sign-in just needs a refresh, a non-BRYC account never
+    // will work. The sweep delivers the email either way.
+    return { status: 'forbidden', message: googleTokenLive_(e.parameter.adminToken)
+      ? 'That account is not a BRYC account.'
+      : 'Your sign-in has expired.' };
+  }
 
   const sheetRow = Number(e.parameter.row || 0);
   const kind = String(e.parameter.kind || '').trim();
@@ -633,6 +670,21 @@ function composeNotification_(row, map, kind) {
           : 'Good news -- your ' + kindOf + ' has been taken care of.\n')
       + portalLinkLine_()
       + '\nIf something does not look right, reply to your BRYC counselor or advisor.\n\nThe BRYC Team';
+
+  } else if (kind === 'declined') {
+    const reason = String(cell_(row, map, '_MessagetoStudent') || '').trim();
+    if (!reason) return { error: 'Add a reason for the student before sending this.' };
+    subject = 'An update on your BRYC ' + kindOf + ': we were not able to complete it';
+    body = 'Hi ' + first + ',\n\n'
+      + 'Thank you for submitting your ' + kindOf + '. We are sorry -- BRYC was not able to fulfill it.\n\n'
+      + 'Why:\n\n'
+      + '    ' + reason + '\n\n'
+      + (isPaymentRequest_(row, map)
+          ? 'Nothing has been taken out of your senior funds for this request.\n'
+          : '')
+      + portalLinkLine_()
+      + '\nIf you still need this, please talk with your BRYC counselor or advisor about next steps. '
+      + 'You are always welcome to submit a new request.\n\nThe BRYC Team';
 
   } else if (kind === 'message') {
     const message = String(cell_(row, map, '_MessagetoStudent') || '').trim();
@@ -719,9 +771,17 @@ function kindForChange_(prev, next) {
   const n = String(next).split('||');
   const pState = p[0] || '', nState = n[0] || '';
   const pMsg = p.slice(1).join('||'), nMsg = n.slice(1).join('||');
+  // Removing a request, or putting one back, never emails anybody.
+  if (nState === STAGE_REMOVED || pState === STAGE_REMOVED) return null;
   // Completion supersedes a stage bump, and a counselor's note supersedes a
   // bare stage change, so one save never produces two emails.
   if (nState === 'FULFILLED' && pState !== 'FULFILLED') return 'fulfilled';
+  if (nState === STAGE_DECLINED) {
+    // The reason IS the email, so without one there is nothing to send yet.
+    // Adding or changing it later sends the email then.
+    if (!nMsg) return null;
+    return (pState !== STAGE_DECLINED || nMsg !== pMsg) ? 'declined' : null;
+  }
   if (nMsg && nMsg !== pMsg) return 'message';
   if (nState !== pState && nState !== 'FULFILLED') return 'stage';
   return null;
@@ -851,6 +911,7 @@ function commsSheet_() {
 
 const COMMS_LABELS = {
   fulfilled: 'Request complete',
+  declined:  'Unable to fulfill',
   message:   'Counselor note',
   stage:     'Stage update',
   received:  'Request received'
@@ -1124,20 +1185,33 @@ function attendanceIndex_() {
   // the portal does. Everything needed sits within the first 30 columns.
   const lastRow = sheet.getLastRow();
   const lastCol = Math.min(sheet.getLastColumn(), 30);
-  if (lastRow < ATTENDANCE_HEADER_ROW || lastCol < 1) return null;
+  if (lastRow < 2 || lastCol < 1) return null;
   const rows = sheet.getRange(1, 1, lastRow, lastCol).getValues();
-  if (rows.length < ATTENDANCE_HEADER_ROW) return null;
+  if (rows.length < 2) return null;
 
-  const headers = rows[ATTENDANCE_HEADER_ROW - 1].map(function (h) { return String(h).trim(); });
+  // FIND the header row rather than trusting a fixed number. This workbook is
+  // rebuilt every year: in Fall 2026 a "Program Manager" column was added and
+  // the header moved from row 5 to row 6, which silently blanked attendance for
+  // every student -- the lookup found no "First Name" column and gave up.
+  // Scanning means next year's rebuild cannot break it the same way.
+  let headerRow = -1;
+  const scanTo = Math.min(rows.length, ATTENDANCE_HEADER_SCAN_ROWS);
+  for (let r = 0; r < scanTo; r++) {
+    const low = rows[r].map(function (h) { return String(h).trim().toLowerCase(); });
+    if (low.indexOf('first name') > -1 && low.indexOf('last name') > -1) { headerRow = r; break; }
+  }
+  if (headerRow === -1) {
+    console.error('Attendance tab: no row in the first ' + scanTo +
+      ' has both "First Name" and "Last Name". Check the tab layout.');
+    return null;
+  }
+
+  const headers = rows[headerRow].map(function (h) { return String(h).trim(); });
   const lower = headers.map(function (h) { return h.toLowerCase(); });
 
   const firstIdx = lower.indexOf('first name');
   const lastIdx = lower.indexOf('last name');
   const totalIdx = lower.indexOf('total %');
-  if (firstIdx === -1 || lastIdx === -1) {
-    console.error('Attendance tab is missing "First Name" / "Last Name" headers.');
-    return null;
-  }
 
   // Session columns: anything headed "Startup ..." or "Week N ...".
   const sessionCols = [];
@@ -1146,7 +1220,7 @@ function attendanceIndex_() {
   }
 
   const index = {};
-  for (let r = ATTENDANCE_HEADER_ROW; r < rows.length; r++) {
+  for (let r = headerRow + 1; r < rows.length; r++) {
     const row = rows[r];
     const full = String(row[firstIdx] || '').trim() + ' ' + String(row[lastIdx] || '').trim();
     const key = nameKey_(full);
@@ -1262,8 +1336,8 @@ function diagnoseAttendance() {
     console.log('Session columns detected per fellow: ' + sample.sessionsRecorded
       + ' recorded so far, most recent column header "' + sample.asOf + '".');
   }
-  console.log('If the count looks wrong, check that the header row is row '
-    + ATTENDANCE_HEADER_ROW + ' and that name columns are "First Name" / "Last Name".');
+  console.log('If the count looks wrong, check that some row in the first '
+    + ATTENDANCE_HEADER_SCAN_ROWS + ' has both "First Name" and "Last Name" headers.');
 }
 
 
@@ -1334,16 +1408,24 @@ function onFormSubmit(e) {
     const first = str_(row, map, 'name').split(/\s+/)[0] || 'there';
     const kindOf = friendlyType_(requestTypeOf_(row, map));
 
+    const subject = 'We got your BRYC ' + kindOf;
+    const body = 'Hi ' + first + ',\n\n'
+      + 'We have your ' + kindOf + ' — it is in the queue and your BRYC counselor or advisor '
+      + 'will review it shortly. You do not need to do anything else right now.\n'
+      + portalLinkLine_()
+      + '\nYou will hear from us again as it moves along.\n\nThe BRYC Team';
+
     MailApp.sendEmail({
       to: to,
       name: SENDER_NAME,
-      subject: 'We got your BRYC ' + kindOf,
-      body: 'Hi ' + first + ',\n\n'
-        + 'We have your ' + kindOf + ' — it is in the queue and your BRYC counselor or advisor '
-        + 'will review it shortly. You do not need to do anything else right now.\n'
-        + portalLinkLine_()
-        + '\nYou will hear from us again as it moves along.\n\nThe BRYC Team'
+      subject: subject,
+      body: body
     });
+    // This one used to send straight through MailApp and skip the log entirely,
+    // so a student's very first email was missing from both the Comms Log and
+    // their own "Messages From BRYC" panel. Log it like every other send.
+    try { logComm_(row, map, 'received', { to: to, subject: subject, body: body }, 'Automatic'); }
+    catch (err) { console.error('Comms log write failed: ' + err); }
   } catch (err) {
     // Never let a failed acknowledgement interfere with the submission itself.
     console.error('Submission acknowledgement failed: ' + err);
