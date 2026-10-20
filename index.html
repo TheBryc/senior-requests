@@ -243,6 +243,8 @@
   .pill-ok{background:var(--ok-bg);color:var(--ok-ink);}
   .pill-pending{background:var(--pending-bg);color:var(--pending-ink);}
   .pill-declined{background:var(--warn-bg);color:var(--warn-ink);}
+  .hold-banner{margin:10px 0 4px;padding:12px 14px;border-radius:10px;background:var(--warn-bg);
+    color:var(--warn-ink);border-left:4px solid var(--warn-ink);font-size:13.5px;font-weight:600;line-height:1.5;}
   .declined-box{margin-top:14px;padding:14px 16px;border-radius:10px;background:var(--warn-bg);color:var(--ink);
     border-left:4px solid var(--warn-ink);}
   .declined-box .hdr{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;
@@ -583,6 +585,33 @@
 #staff .btn-reopen{background:#fff;border:1px solid var(--mid-teal);color:var(--mid-teal);border-radius:8px;
     padding:8px 14px;font-size:13px;font-weight:600;white-space:nowrap;}
 #staff .decline-panel .dp-error{color:var(--warn-ink);font-size:12px;margin-top:6px;display:none;}
+#staff .hold-tag{background:var(--warn-bg);color:var(--warn-ink);font-weight:700;font-size:10.5px;
+    padding:2px 8px;border-radius:20px;white-space:nowrap;}
+#staff .hold-panel{margin-top:14px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:#fff;
+    display:flex;gap:12px;flex-wrap:wrap;align-items:center;}
+#staff .hold-panel .fld-hold-note{flex:1 1 220px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;
+    font-size:13px;font-family:inherit;}
+#staff .btn-hold-save{background:var(--mid-teal);color:#fff;border:none;border-radius:8px;padding:8px 14px;
+    font-size:13px;font-weight:600;}
+#staff .btn-hold-save:disabled{opacity:.5;}
+#staff .hold-import{background:#fff;border:1px solid var(--border);border-radius:var(--radius);
+    padding:16px 18px;margin:0 0 16px;box-shadow:var(--shadow);}
+#staff .hold-import .hi-title{font-weight:700;font-size:14px;color:var(--ink);}
+#staff .hold-import .hi-help{font-size:12px;color:var(--muted);margin:3px 0 10px;line-height:1.45;}
+#staff .hold-import textarea{width:100%;border:1px solid var(--border);border-radius:6px;padding:8px 10px;
+    font-size:13px;font-family:inherit;resize:vertical;}
+#staff .hold-import .hi-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px;}
+#staff .hold-import .hi-actions input[type=text]{flex:1 1 240px;border:1px solid var(--border);border-radius:6px;
+    padding:8px 10px;font-size:13px;font-family:inherit;}
+#staff .hi-preview{margin-top:12px;border-top:1px dashed var(--border);padding-top:6px;}
+#staff .hold-row{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;padding:8px 0;
+    border-bottom:1px solid var(--border);font-size:13px;line-height:1.45;}
+#staff .hold-row input[type=checkbox]{margin-top:3px;flex-shrink:0;}
+#staff label.hold-row > span{flex:1;}
+#staff .hp-note{color:var(--muted);font-size:12px;}
+#staff .hp-warn{color:var(--warn-ink);font-weight:600;font-size:12px;}
+#staff .hold-list{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:14px 18px;
+    box-shadow:var(--shadow);}
 #staff .reason-text{font-size:13px;color:var(--ink);max-width:520px;line-height:1.5;}
 #staff .qexpand{background:none;border:none;color:var(--mid-teal);font-size:12px;
     text-decoration:underline;padding:4px 0;}
@@ -641,6 +670,7 @@
       <button id="view-queue" class="active">Queue</button>
       <button id="view-all">All requests</button>
       <button id="view-comms">Comms</button>
+      <button id="view-holds">Funds holds</button>
     </div>
     <input class="search-input" id="search-input" type="text" placeholder="Search by name…" />
     <label class="toggle-row" style="margin-left:0;"><input type="checkbox" id="email-students" checked /> Email students on changes</label>
@@ -1210,6 +1240,12 @@ function dashboardHtml(){
 function fundsPanelHtml(d){
   let h = '<div class="panel"><div class="panel-title">My Senior Funds</div>';
 
+  // Just the status. Deliberately says nothing about why, or about how it might
+  // change -- the page only reports where things stand.
+  if(d.fundsOnHold){
+    h += '<div class="hold-banner">Your senior funds are currently on hold.</div>';
+  }
+
   if(!d.funds){
     h += '<div class="empty">Your senior funds haven\'t been set up in the tracker yet. '
       + "Once your BRYC counselor adds you, your balance will show up here automatically.</div>";
@@ -1703,6 +1739,10 @@ const SHEET_ID = "1J56K1q9DrIUC4YiLx_5R9vC3e2uq2KExcl6t1-0VhKw";  // PY27_BRYC S
 const SHEET_NAME = "Form Responses";        // raw Google Form submissions
 const FEE_BALANCE_SHEET = "Fee Payment Balance";
 const COMMS_SHEET = "Comms Log";           // written by the Apps Script; read-only here
+// One row per fellow whose senior funds counselors have put on hold. The portal
+// only ever learns "on hold: yes/no" from this -- the note never leaves the tab.
+const FUNDS_STATUS_SHEET = "Funds Status";
+const FUNDS_STATUS_HEADERS = ["Fellow Name", "Email", "Status", "Internal note", "Updated"];
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 
 // $150 for the academic year, the same for every fellow. This OVERRIDES the
@@ -1831,6 +1871,8 @@ let responses = [];       // parsed rows from "Form Responses"
 let colMap = {};          // resolved header positions
 let feeRows = [];         // parsed rows from "Fee Payment Balance"
 let commsRows = [];       // every email BRYC has sent, newest first
+let holdRows = [];        // parsed rows from "Funds Status"
+let holdsRawLen = 0;      // rows on that tab incl. header, so the next write knows where to land
 let feeLayout = null;     // where the columns and triplets are
 let activeFilter = "all";
 let searchTerm = "";
@@ -2380,7 +2422,9 @@ function loadData(){
     // The attendance workbook doubles as the senior roster.
     sheetsGetFrom(ATTENDANCE_SHEET_ID, a1(ATTENDANCE_TAB, "A1:BZ")).catch(function(){ return []; }),
     // Created by the backend on its first send, so "missing" is normal at first.
-    sheetsGet(a1(COMMS_SHEET, "A1:I")).catch(function(){ return []; })
+    sheetsGet(a1(COMMS_SHEET, "A1:I")).catch(function(){ return []; }),
+    // Created the first time a counselor puts someone on hold, so absent is normal.
+    sheetsGet(a1(FUNDS_STATUS_SHEET, "A1:E")).catch(function(){ return []; })
   ]).then(function(results){
     return ensureTrackingColumns(results[0]).then(function(rows){
       colMap = rows.length ? resolveColumns(rows[0]) : {};
@@ -2390,6 +2434,8 @@ function loadData(){
       feeRows = parseFeeRows(results[1]);
       roster = parseRoster(results[2]);
       commsRows = parseComms(results[3]);
+      holdsRawLen = (results[4] || []).length;
+      holdRows = parseHolds(results[4]);
       computeRosterOnly();
       applyCounselorDefault();
 
@@ -2620,6 +2666,9 @@ function renderSummary(){
   });
   const seniors = new Set(scoped.map(function(r){ return (r.email || r.name || "").toLowerCase(); }).filter(Boolean));
 
+  const held = holdRows.filter(function(h){
+    return isHeld(h) && (!mine || scopedKeys.has(h.email) || scopedKeys.has(h.key));
+  }).length;
   const untouched = scopedFellows.filter(function(f){ return f.spent === 0; }).length;
   const spent = scopedFellows.reduce(function(sum, f){ return sum + f.spent; }, 0);
   const overdrawn = scopedFellows.filter(function(f){ return f.remaining < 0; }).length;
@@ -2630,6 +2679,7 @@ function renderSummary(){
     { n: seniors.size, l: "Seniors who've requested" },
     { n: rosterOnly.length, l: "On roster, never requested" },
     { n: overdrawn, l: "Fellows over their balance", alert: overdrawn > 0 },
+    { n: held, l: "Senior funds on hold", alert: held > 0 },
     { n: "$" + spent.toFixed(0), l: "Spent from senior funds" }
   ];
 
@@ -2642,6 +2692,7 @@ function renderSummary(){
 function render(){
   renderSummary();
   if(viewMode === "comms"){ renderComms(); return; }
+  if(viewMode === "holds"){ renderHolds(); return; }
   const list = visibleList();
   document.getElementById("count-note").textContent = list.length + " request" + (list.length === 1 ? "" : "s");
 
@@ -2710,6 +2761,7 @@ function queueRowHtml(r){
     +   '<div class="qname">' + escapeHtml(r.name || "(no name)") + "</div>"
     +   '<div class="qmeta">' + escapeHtml(type) + " &middot; " + escapeHtml(r.counselor || "no counselor")
     +     attendanceChip(r.name)
+    +     holdTagHtml(r.email, r.name)
     +     (r.messageToStudent ? ' &middot; <span class="msg-hint">note sent</span>' : "")
     +     (overBudget
           ? ' &middot; <span class="over-budget">asking $' + asking.toFixed(2)
@@ -2769,10 +2821,386 @@ function rosterRowHtml(p){
     +   '<div class="qname">' + escapeHtml(p.name) + "</div>"
     +   '<div class="qmeta">No requests yet &middot; ' + att
     +     (p.remaining !== null ? " &middot; $" + p.remaining.toFixed(2) + " available" : "")
+    +     holdTagHtml("", p.name)
     +   "</div>"
     + "</div>"
     + '<span class="qage' + (low ? " old" : "") + '">' + (low ? "low attendance" : "roster") + "</span>"
+    + '<button class="btn-reopen btn-hold-roster" data-key="' + escapeHtml(p.key) + '">'
+    +   (isHeld(holdFor("", p.name)) ? "Release hold" : "Funds on hold") + "</button>"
     + "</div>";
+}
+
+/* ---- Senior funds "on hold" -------------------------------------------------
+ * A plain status, set by counselors, shown to counselors (tag on the request and
+ * a count) and to the fellow (one line in their portal). It does not block or
+ * change anything else, and it carries no "how to get it back" text anywhere.
+ * Stored on its own "Funds Status" tab so BRYC's Fee Payment Balance formulas
+ * and layout are never touched. The internal note is for counselors only. */
+function parseHolds(rows){
+  if(!rows || rows.length < 2) return [];
+  const head = rows[0].map(function(h){ return normHeader(h); });
+  const at = function(n){ return head.indexOf(n); };
+  const iName = at("fellow name"), iMail = at("email"), iStatus = at("status"), iNote = at("internal note");
+  const get = function(row, i){ return i > -1 && row[i] !== undefined && row[i] !== null ? String(row[i]).trim() : ""; };
+  return rows.slice(1).map(function(row, i){
+    const name = get(row, iName);
+    return { sheetRow: i + 2, name: name, key: nameKey(name), email: get(row, iMail).toLowerCase(),
+             status: get(row, iStatus), note: get(row, iNote) };
+  }).filter(function(h){ return h.name || h.email; });
+}
+
+/** The Funds Status row for this fellow: by email when both sides have one, else by name. */
+function holdFor(email, name){
+  const e = String(email || "").trim().toLowerCase();
+  const k = nameKey(name);
+  return holdRows.find(function(h){
+    if(h.email && e) return h.email === e;
+    return !!k && h.key === k;
+  }) || null;
+}
+function isHeld(h){ return !!h && /^on hold$/i.test(h.status); }
+function isOnHold(r){ return isHeld(holdFor(r.email, r.name)); }
+
+function holdTagHtml(email, name){
+  return isHeld(holdFor(email, name)) ? ' &middot; <span class="hold-tag">Funds on hold</span>' : "";
+}
+
+/** Fellow-level (not request-level), so it sits with the request's details. */
+function holdControlHtml(r){
+  const h = holdFor(r.email, r.name);
+  return '<div class="hold-panel">'
+    + '<label class="checkbox-field"><input type="checkbox" class="fld-hold" ' + (isHeld(h) ? "checked" : "") + " /> "
+    +   "Senior funds on hold</label>"
+    + '<input type="text" class="fld-hold-note" placeholder="Internal note (fellows never see this)" value="' + escapeHtml(h ? h.note : "") + '" />'
+    + '<button class="btn-hold-save" data-sheetrow="' + r.sheetRow + '">Save</button>'
+    + '<span class="save-note">The fellow sees only that their funds are on hold.</span>'
+    + "</div>";
+}
+
+function sheetsBatchUpdate(requests){
+  const url = "https://sheets.googleapis.com/v4/spreadsheets/" + SHEET_ID + ":batchUpdate";
+  return fetch(url, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + accessToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ requests: requests })
+  }).then(function(res){
+    if(!res.ok) return res.json().then(function(b){ throw new Error(apiError(res, b)); });
+    return res.json();
+  });
+}
+
+let fundsSheetReady = false;
+/** Makes sure the Funds Status tab and its header row exist. */
+function ensureFundsStatusSheet(){
+  if(fundsSheetReady) return Promise.resolve();
+  const headerRange = a1(FUNDS_STATUS_SHEET, "A1:E1");
+  const writeHeader = function(){
+    return sheetsUpdate(headerRange, [FUNDS_STATUS_HEADERS]).then(function(){
+      fundsSheetReady = true;
+      if(!holdsRawLen) holdsRawLen = 1;
+    });
+  };
+  return sheetsGet(headerRange).then(function(rows){
+    if(rows.length){ fundsSheetReady = true; return; }
+    return writeHeader();
+  }).catch(function(err){
+    // Only a missing tab is ours to fix; anything else (expired sign-in...) is reported.
+    if(!/Unable to parse range|not found|Requested entity/i.test(err.message || "")) throw err;
+    return sheetsBatchUpdate([{ addSheet: { properties: { title: FUNDS_STATUS_SHEET } } }]).then(writeHeader);
+  });
+}
+
+/** Puts a fellow's funds on hold, or releases them. `who` is {name, email}. */
+function setFundsHold(who, onHold, note){
+  return ensureFundsStatusSheet().then(function(){
+    const existing = holdFor(who.email, who.name);
+    const stamp = new Date().toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" })
+      + " (" + (String(userEmail || "").split("@")[0] || "staff") + ")";
+    const email = (who.email || (existing && existing.email) || "").toLowerCase();
+    const row = [who.name || (existing && existing.name) || "", email, onHold ? "On hold" : "Active", note || "", stamp];
+    const rowNum = existing ? existing.sheetRow : holdsRawLen + 1;
+    return sheetsUpdate(a1(FUNDS_STATUS_SHEET, "A" + rowNum + ":E" + rowNum), [row]).then(function(){
+      const rec = { sheetRow: rowNum, name: row[0], key: nameKey(row[0]), email: email, status: row[2], note: row[3] };
+      if(existing){ Object.assign(existing, rec); }
+      else { holdRows.push(rec); holdsRawLen = rowNum; }
+    });
+  });
+}
+
+function saveHold(sheetRowStr){
+  const r = findRequest(sheetRowStr);
+  if(!r) return;
+  const scope = document.querySelector('[data-idx="' + r.sheetRow + '"]');
+  if(!scope) return;
+  const box = scope.querySelector(".fld-hold");
+  const noteEl = scope.querySelector(".fld-hold-note");
+  const btn = scope.querySelector(".btn-hold-save");
+  const first = String(r.name || "").trim().split(/\s+/)[0] || "the fellow";
+  const on = !!(box && box.checked);
+  if(btn){ btn.disabled = true; btn.textContent = "Saving…"; }
+  setFundsHold({ name: r.name, email: r.email }, on, noteEl ? noteEl.value.trim() : "")
+    .then(function(){
+      showToast(on ? first + "'s senior funds are on hold. They'll see that in their portal."
+                   : first + "'s senior funds are no longer on hold.");
+      render();
+    })
+    .catch(function(e){
+      if(btn){ btn.disabled = false; btn.textContent = "Save"; }
+      showToast(e.message || "Couldn't save that.");
+    });
+}
+
+function toggleRosterHold(key){
+  const p = rosterOnly.find(function(x){ return x.key === key; });
+  if(!p) return;
+  const now = isHeld(holdFor("", p.name));
+  const first = String(p.name || "").trim().split(/\s+/)[0] || "this fellow";
+  if(!window.confirm((now ? "Take " + first + "'s senior funds off hold?" : "Put " + first + "'s senior funds on hold?")
+      + "\n\nThey will see that on their portal. Nobody is emailed.")) return;
+  setFundsHold({ name: p.name, email: "" }, !now, "")
+    .then(function(){
+      showToast(now ? first + "'s funds are no longer on hold." : first + "'s funds are on hold.");
+      render();
+    })
+    .catch(function(e){ showToast(e.message || "Couldn't save that."); });
+}
+
+/* ---- Funds holds view: paste a list of names, preview the matches, apply ----
+ * Counselors keep these lists elsewhere, so rather than 30 separate clicks this
+ * takes pasted names (one per line), shows how each one matches what the tracker
+ * already knows, and only touches the ones left ticked. Nothing is guessed
+ * silently: a near-miss spelling is offered as a suggestion, never applied
+ * automatically. */
+let holdDraft = "";        // what was last pasted
+let holdPreview = null;    // parsed preview rows, or null before "Preview matches"
+
+function levenshtein(a, b){
+  if(a === b) return 0;
+  const m = a.length, n = b.length;
+  if(!m) return n;
+  if(!n) return m;
+  let prev = new Array(n + 1), cur = new Array(n + 1);
+  for(let j = 0; j <= n; j++) prev[j] = j;
+  for(let i = 1; i <= m; i++){
+    cur[0] = i;
+    for(let j = 1; j <= n; j++){
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    const t = prev; prev = cur; cur = t;
+  }
+  return prev[n];
+}
+
+/** Everyone the tracker knows by name: request-makers, the attendance roster, and the funds tab. */
+function holdPool(){
+  const pool = {};
+  const add = function(name, email, src){
+    const k = nameKey(name);
+    if(!k) return;
+    const e = String(email || "").trim().toLowerCase();
+    const p = pool[k] || (pool[k] = { name: String(name).trim(), key: k, emails: {}, src: src });
+    if(e) p.emails[e] = true;
+    if(src === "requests") p.src = "requests";
+  };
+  liveResponses().forEach(function(r){ add(r.name, r.email, "requests"); });
+  feeRows.forEach(function(f){ add(f.name, f.email, "funds"); });
+  roster.forEach(function(p){ add(p.name, "", "roster"); });
+  return pool;
+}
+
+function buildHoldPreview(text){
+  const pool = holdPool();
+  const seen = {};
+  const items = [];
+  String(text || "").split(/\r?\n/).forEach(function(line){
+    const typed = line.replace(/^[\s\-*•]+/, "").replace(/^\d+[.)]\s+/, "").trim();
+    const key = nameKey(typed);
+    if(!key || seen[key]) return;
+    seen[key] = true;
+
+    const item = { typed: typed, key: key, apply: false };
+    const hit = pool[key];
+    if(hit){
+      const emails = Object.keys(hit.emails);
+      item.kind = "match";
+      item.useName = hit.name;
+      item.useEmail = emails.length === 1 ? emails[0] : "";
+      item.src = hit.src;
+      item.ambiguous = emails.length > 1;
+      item.already = isHeld(holdFor(item.useEmail, item.useName));
+      item.apply = !item.already;
+    } else {
+      let best = null;
+      Object.keys(pool).forEach(function(k){
+        const d = levenshtein(key, k);
+        const limit = key.length > 12 ? 2 : 1;
+        if(d <= limit && (!best || d < best.d)) best = { d: d, p: pool[k] };
+      });
+      if(best){
+        const emails = Object.keys(best.p.emails);
+        item.kind = "close";
+        item.useName = best.p.name;
+        item.useEmail = emails.length === 1 ? emails[0] : "";
+        item.src = best.p.src;
+      } else {
+        item.kind = "none";
+        item.useName = typed;
+        item.useEmail = "";
+      }
+    }
+    items.push(item);
+  });
+  return items;
+}
+
+function holdRec(row, sheetRow){
+  return { sheetRow: sheetRow, name: row[0], key: nameKey(row[0]), email: row[1], status: row[2], note: row[3] };
+}
+
+/** The ticked rows as unique people -- two typed spellings of one person count once. */
+function tickedHolds(items){
+  const chosen = {};
+  (items || []).filter(function(i){ return i.apply; }).forEach(function(i){
+    chosen[(i.useEmail || "") + "|" + nameKey(i.useName)] = i;
+  });
+  return Object.keys(chosen).map(function(k){ return chosen[k]; });
+}
+
+/** Puts every ticked preview row on hold: existing rows updated, new ones added in ONE write. */
+function applyHolds(items, note){
+  const todo = tickedHolds(items);
+  if(!todo.length) return Promise.resolve(0);
+
+  return ensureFundsStatusSheet().then(function(){
+    const stamp = new Date().toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" })
+      + " (" + (String(userEmail || "").split("@")[0] || "staff") + ")";
+    const fresh = [], writes = [];
+    todo.forEach(function(i){
+      const existing = holdFor(i.useEmail, i.useName);
+      const row = [i.useName, i.useEmail || (existing && existing.email) || "", "On hold", note || "", stamp];
+      if(existing){
+        writes.push(sheetsUpdate(a1(FUNDS_STATUS_SHEET, "A" + existing.sheetRow + ":E" + existing.sheetRow), [row]).then(function(){
+          Object.assign(existing, holdRec(row, existing.sheetRow));
+        }));
+      } else {
+        fresh.push(row);
+      }
+    });
+    if(fresh.length){
+      const start = holdsRawLen + 1, end = start + fresh.length - 1;
+      writes.push(sheetsUpdate(a1(FUNDS_STATUS_SHEET, "A" + start + ":E" + end), fresh).then(function(){
+        fresh.forEach(function(row, j){ holdRows.push(holdRec(row, start + j)); });
+        holdsRawLen = end;
+      }));
+    }
+    return Promise.all(writes).then(function(){ return todo.length; });
+  });
+}
+
+function holdPreviewRowHtml(i, idx){
+  let box, text;
+  if(i.already){
+    box = '<input type="checkbox" disabled />';
+    text = "<b>" + escapeHtml(i.useName) + '</b> <span class="hp-note">already on hold</span>';
+  } else if(i.kind === "match"){
+    box = '<input type="checkbox" class="hp-check" data-i="' + idx + '" checked />';
+    text = "<b>" + escapeHtml(i.useName) + '</b> <span class="hp-note">'
+      + (i.src === "requests" ? "has submitted requests" : i.src === "funds" ? "on the funds tab" : "on the attendance roster")
+      + (i.useEmail ? " &middot; " + escapeHtml(i.useEmail) : (i.ambiguous ? " &middot; two emails use this name, matched by name" : " &middot; matched by name"))
+      + "</span>";
+  } else if(i.kind === "close"){
+    box = '<input type="checkbox" class="hp-check" data-i="' + idx + '" />';
+    text = "<b>" + escapeHtml(i.typed) + '</b> <span class="hp-warn">not found &mdash; close to &ldquo;' + escapeHtml(i.useName)
+      + "&rdquo;.</span> Tick to apply to " + escapeHtml(i.useName) + " instead.";
+  } else {
+    box = '<input type="checkbox" class="hp-check" data-i="' + idx + '" />';
+    text = "<b>" + escapeHtml(i.typed) + '</b> <span class="hp-warn">not found on any request or the roster.</span> '
+      + "Tick only if the spelling is certain; it will only show on their portal if their form name is spelled the same way.";
+  }
+  return '<label class="hold-row">' + box + "<span>" + text + "</span></label>";
+}
+
+function renderHolds(){
+  const container = document.getElementById("list");
+  container.className = "list";
+  const held = holdRows.filter(isHeld);
+  document.getElementById("count-note").textContent = held.length + " on hold";
+
+  let h = '<div class="hold-import">'
+    + '<div class="hi-title">Put a list of fellows\' senior funds on hold</div>'
+    + '<div class="hi-help">Paste names, one per line. You\'ll see how each one matches before anything is saved. '
+    +   "Fellows see only that their funds are on hold.</div>"
+    + '<textarea id="hold-paste" rows="6" placeholder="Jane Doe&#10;John Smith">' + escapeHtml(holdDraft) + "</textarea>"
+    + '<div class="hi-actions"><button id="hold-preview-btn" class="btn-hold-save">Preview matches</button></div>';
+
+  if(holdPreview){
+    const ticked = tickedHolds(holdPreview).length;
+    h += '<div class="hi-preview">'
+      + (holdPreview.length ? holdPreview.map(holdPreviewRowHtml).join("") : '<div class="empty-state">No names found in that text.</div>')
+      + "</div>";
+    if(holdPreview.length){
+      h += '<div class="hi-actions"><input type="text" id="hold-bulk-note" placeholder="Internal note for all of these (optional)" value="" />'
+        + '<button id="hold-apply-btn" class="btn-decline" style="background:var(--mid-teal);">Put ' + ticked + " on hold</button>"
+        + '<span class="save-note" id="hold-tick-count"></span></div>';
+    }
+  }
+  h += "</div>";
+
+  h += '<div class="hold-list"><div class="hi-title" style="margin-bottom:6px;">Currently on hold &mdash; ' + held.length + "</div>"
+    + (held.length ? held.map(function(x, i){
+        return '<div class="hold-row"><span><b>' + escapeHtml(x.name) + '</b>'
+          + (x.email ? ' <span class="hp-note">' + escapeHtml(x.email) + "</span>" : "")
+          + (x.note ? ' <span class="hp-note">&middot; ' + escapeHtml(x.note) + "</span>" : "")
+          + '</span><button class="btn-reopen hold-release" data-sheetrow="' + x.sheetRow + '">Release</button></div>';
+      }).join("") : '<div class="empty-state">Nobody is on hold.</div>')
+    + "</div>";
+
+  container.innerHTML = h;
+
+  const paste = document.getElementById("hold-paste");
+  paste.addEventListener("input", function(){ holdDraft = paste.value; });
+  document.getElementById("hold-preview-btn").addEventListener("click", function(){
+    holdDraft = paste.value;
+    holdPreview = buildHoldPreview(holdDraft);
+    renderHolds();
+  });
+  const refreshCount = function(){
+    const n = tickedHolds(holdPreview).length;
+    const btn = document.getElementById("hold-apply-btn");
+    if(btn){ btn.textContent = "Put " + n + " on hold"; btn.disabled = n === 0; }
+  };
+  container.querySelectorAll(".hp-check").forEach(function(c){
+    c.addEventListener("change", function(){
+      holdPreview[Number(c.getAttribute("data-i"))].apply = c.checked;
+      refreshCount();
+    });
+  });
+  refreshCount();
+
+  const apply = document.getElementById("hold-apply-btn");
+  if(apply) apply.addEventListener("click", function(){
+    const n = tickedHolds(holdPreview).length;
+    if(!n) return;
+    if(!window.confirm("Put " + n + " fellow" + (n === 1 ? "" : "s") + "' senior funds on hold?\n\nThey'll see that on their portal. Nobody is emailed.")) return;
+    apply.disabled = true; apply.textContent = "Saving…";
+    applyHolds(holdPreview, (document.getElementById("hold-bulk-note").value || "").trim())
+      .then(function(count){
+        showToast(count + " fellow" + (count === 1 ? "" : "s") + "' senior funds put on hold.");
+        holdPreview = null; holdDraft = "";
+        render();
+      })
+      .catch(function(e){ showToast(e.message || "Couldn't save that."); renderHolds(); });
+  });
+
+  container.querySelectorAll(".hold-release").forEach(function(b){
+    b.addEventListener("click", function(){
+      const rec = holdRows.find(function(x){ return String(x.sheetRow) === b.getAttribute("data-sheetrow"); });
+      if(!rec) return;
+      setFundsHold({ name: rec.name, email: rec.email }, false, rec.note)
+        .then(function(){ showToast(rec.name + "'s funds are no longer on hold."); render(); })
+        .catch(function(e){ showToast(e.message || "Couldn't save that."); });
+    });
+  });
 }
 
 /* ---- Comms log -------------------------------------------------------------
@@ -2845,7 +3273,7 @@ function detailGridHtml(r){
       + "</div>";
   }
   if(!rows) rows = '<div class="dg-value" style="grid-column:1/-1;color:var(--muted);">No extra detail was submitted with this request.</div>';
-  return '<div class="detail-grid">' + rows + "</div>" + commsHtml(r);
+  return '<div class="detail-grid">' + rows + "</div>" + commsHtml(r) + holdControlHtml(r);
 }
 
 function messageFieldHtml(r){
@@ -2923,6 +3351,12 @@ function closedCardHtml(r){
 }
 
 function wireStatusButtons(container){
+  container.querySelectorAll(".btn-hold-save").forEach(function(b){
+    b.addEventListener("click", function(e){ e.stopPropagation(); saveHold(b.getAttribute("data-sheetrow")); });
+  });
+  container.querySelectorAll(".btn-hold-roster").forEach(function(b){
+    b.addEventListener("click", function(e){ e.stopPropagation(); toggleRosterHold(b.getAttribute("data-key")); });
+  });
   container.querySelectorAll(".btn-decline").forEach(function(b){
     b.addEventListener("click", function(e){ e.stopPropagation(); declineRequest(b.getAttribute("data-sheetrow")); });
   });
@@ -3109,7 +3543,7 @@ function openCardHtml(r){
     +   '<span class="req-badge">' + escapeHtml(type) + "</span>"
     +   "<div><div class=\"rc-name\">" + escapeHtml(r.name || "(no name)") + "</div>"
     +   '<div class="rc-meta">' + escapeHtml(r.timestamp) + " &middot; " + escapeHtml(r.email)
-    +     " &middot; Counselor: " + escapeHtml(r.counselor) + attendanceChip(r.name) + "</div></div>"
+    +     " &middot; Counselor: " + escapeHtml(r.counselor) + attendanceChip(r.name) + holdTagHtml(r.email, r.name) + "</div></div>"
     +   '<span class="spacer"></span>'
     +   (r.fulfilled ? '<span class="fulfilled-pill">Fulfilled</span>'
                      : '<span class="req-badge">' + escapeHtml(r.stage) + "</span>")
@@ -3394,11 +3828,13 @@ window.__staffBoot = function(){
     document.getElementById("view-queue").classList.toggle("active", mode === "queue");
     document.getElementById("view-all").classList.toggle("active", mode === "all");
     document.getElementById("view-comms").classList.toggle("active", mode === "comms");
+    document.getElementById("view-holds").classList.toggle("active", mode === "holds");
     render();
   };
   document.getElementById("view-queue").addEventListener("click", function(){ setView("queue"); });
   document.getElementById("view-all").addEventListener("click", function(){ setView("all"); });
   document.getElementById("view-comms").addEventListener("click", function(){ setView("comms"); });
+  document.getElementById("view-holds").addEventListener("click", function(){ setView("holds"); });
 };
 })();
 </script>

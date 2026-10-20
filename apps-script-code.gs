@@ -317,6 +317,43 @@ function moneyNumber_(v) {
 }
 
 /** Reads one fellow's funds row into the shape the portal renders. */
+const FUNDS_STATUS_SHEET = 'Funds Status';
+
+/**
+ * True when counselors have put this senior's funds "On hold". The tab is
+ * written by the staff dashboard: Fellow Name | Email | Status | Internal note |
+ * Updated. ONLY this yes/no ever leaves the server -- the internal note is for
+ * counselors, is never sent to a student, and nothing here says how a hold
+ * might be lifted. A missing tab just means nobody is on hold.
+ */
+function fundsHoldFor_(email, displayName) {
+  try {
+    const sheet = tracker_().getSheetByName(FUNDS_STATUS_SHEET);
+    if (!sheet) return false;
+    const rows = sheet.getDataRange().getValues();
+    if (rows.length < 2) return false;
+    const head = rows[0].map(function (h) { return String(h || '').trim().toLowerCase(); });
+    const iName = head.indexOf('fellow name'), iMail = head.indexOf('email'), iStatus = head.indexOf('status');
+    if (iStatus === -1) return false;
+
+    const wantEmail = normalizeEmail_(email);
+    const wantName = nameKey_(displayName);
+    for (let i = 1; i < rows.length; i++) {
+      const rowMail = iMail > -1 ? normalizeEmail_(rows[i][iMail]) : '';
+      const rowName = iName > -1 ? nameKey_(rows[i][iName]) : '';
+      // An email on the row is authoritative; a row with none (a roster senior
+      // who hasn't submitted anything) is matched by name instead.
+      const same = (rowMail && wantEmail) ? rowMail === wantEmail
+                                          : (rowName && wantName && rowName === wantName);
+      if (same) return String(rows[i][iStatus] || '').trim().toLowerCase() === 'on hold';
+    }
+    return false;
+  } catch (err) {
+    console.error('Funds hold lookup failed: ' + err);
+    return false;
+  }
+}
+
 function fundsFor_(email, displayName) {
   const sheet = tracker_().getSheetByName(FEE_BALANCE_SHEET);
   if (!sheet) return null;
@@ -471,6 +508,7 @@ function buildPortalData_(email) {
     firstName: (displayName || '').split(/\s+/)[0] || '',
     role: isAdviseeOnly ? 'advisee' : 'fellow',
     funds: funds,
+    fundsOnHold: isAdviseeOnly ? false : fundsHoldFor_(email, displayName),
     attendance: attendance,
     requests: requests,
     comms: commsForStudent_(email)
