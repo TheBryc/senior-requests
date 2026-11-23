@@ -1440,6 +1440,16 @@ document.addEventListener("click", function(e){
   }
 });
 
+/** What a finished coach / login request says: the thing was sent, check your email. "" for other types. */
+function completionLineFor(r){
+  const t = String(r.type || "");
+  if(t.indexOf("writing coach") > -1) return "You have been connected with your Writing Coach. Check your email \u2014 they will be reaching out to you.";
+  if(t.indexOf("UWorld") > -1) return "Your UWorld login information has been shared with you. Check your email.";
+  if(t.indexOf("College Aid Pro") > -1) return "Your College Aid Pro access has been set up. Check your email for your login information.";
+  if(t.indexOf("MasteryPrep") > -1) return "Your MasteryPrep login information has been shared with you. Check your email.";
+  return "";
+}
+
 function nextStepFor(r){
   const t = String(r.type || "");
   if(t.indexOf("senior funds") > -1){
@@ -1577,11 +1587,15 @@ function requestBodyHtml(r){
       + '<div class="body">' + escapeHtml(r.message) + "</div></div>";
   }
 
-  h += '<div class="next-step"><b>' + (complete ? "All done" : "What happens next") + "</b>"
+  // Coach / login requests finish by sending the fellow something, so point them to their inbox.
+  const checkEmail = complete ? completionLineFor(r) : "";
+  h += '<div class="next-step"><b>' + (checkEmail ? "Check your email" : complete ? "All done" : "What happens next") + "</b>"
     + (complete
-        ? (r.isPayment
-            ? "BRYC has paid this directly and it's reflected in your senior funds balance above."
-            : "This request has been taken care of. Reach out to your counselor if you need anything else.")
+        ? (checkEmail
+            ? escapeHtml(checkEmail)
+            : r.isPayment
+              ? "BRYC has paid this directly and it's reflected in your senior funds balance above."
+              : "This request has been taken care of. Reach out to your counselor if you need anything else.")
         : escapeHtml(nextStepFor(r)))
     + "</div>";
 

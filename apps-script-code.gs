@@ -815,6 +815,21 @@ function handleNotifyStudent(e) {
  * the background sweep, so both always word things identically.
  * Returns {to, subject, body}, or {error} when this row/kind sends nothing.
  */
+/**
+ * For requests that are fulfilled by BRYC sending the fellow something (a coach,
+ * a login), the completed message points them to their inbox. '' for the
+ * requests it doesn't apply to, which keep the standard "taken care of" wording.
+ */
+function completionLine_(type) {
+  const DASH = '\u2014';
+  const lines = {};
+  lines[TYPE_WRITING]     = 'You have been connected with your Writing Coach. Check your email ' + DASH + ' they will be reaching out to you.';
+  lines[TYPE_UWORLD]      = 'Your UWorld login information has been shared with you. Check your email.';
+  lines[TYPE_CAP]         = 'Your College Aid Pro access has been set up. Check your email for your login information.';
+  lines[TYPE_MASTERYPREP] = 'Your MasteryPrep login information has been shared with you. Check your email.';
+  return lines[String(type || '').trim()] || '';
+}
+
 function composeNotification_(row, map, kind) {
   const to = normalizeEmail_(cell_(row, map, 'email'));
   if (!isEmailShaped_(to)) return { error: 'That row has no usable student email.' };
@@ -830,10 +845,16 @@ function composeNotification_(row, map, kind) {
   const blocks = [{ p: 'Hi ' + first + ',' }];
 
   if (kind === 'fulfilled') {
-    subject = 'Your BRYC ' + kindOf + ' is complete';
-    blocks.push({ p: isPay
-      ? 'Good news ' + DASH + ' BRYC has paid the fee for your ' + kindOf + '. It has come out of your senior funds, and your updated balance is in your portal.'
-      : 'Good news ' + DASH + ' your ' + kindOf + ' has been taken care of.' });
+    const checkEmail = completionLine_(requestTypeOf_(row, map));
+    subject = 'Your BRYC ' + kindOf + ' is complete' + (checkEmail ? ': check your email' : '');
+    if (checkEmail) {
+      blocks.push({ p: 'Good news ' + DASH + ' your ' + kindOf + ' is complete.' });
+      blocks.push({ p: checkEmail + ' If you do not see it, check your spam folder.' });
+    } else {
+      blocks.push({ p: isPay
+        ? 'Good news ' + DASH + ' BRYC has paid the fee for your ' + kindOf + '. It has come out of your senior funds, and your updated balance is in your portal.'
+        : 'Good news ' + DASH + ' your ' + kindOf + ' has been taken care of.' });
+    }
     blocks.push({ portal: true });
     blocks.push({ p: 'If something does not look right, please talk with your BRYC counselor or advisor.' });
 
