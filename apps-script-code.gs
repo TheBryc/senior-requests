@@ -674,8 +674,107 @@ function verifyAdmin_(accessToken) {
   }
 }
 
-function portalLinkLine_() {
-  return PORTAL_URL ? '\nYou can see the details anytime in your BRYC Senior Portal:\n' + PORTAL_URL + '\n' : '';
+/* ---------------------------------------------------------------------------
+ * EMAIL FORMATTING
+ * ---------------------------------------------------------------------------
+ * Every student email is described once, as a list of blocks, and rendered twice:
+ * as a styled HTML email (what almost everyone sees) and as clean plain text (the
+ * fallback, and what is kept in the Comms Log and shown in the portal).
+ *   {p}      a paragraph        {h}     a small section heading
+ *   {quote}  an indented note   {ol}    a numbered list of steps
+ *   {box}    text to copy and paste        {code}  a sign-in code
+ *   {button} {label, url}       {portal} the "open your portal" button, if a URL is set
+ *   {sign}   the closing name
+ * ------------------------------------------------------------------------ */
+const EMAIL_TEAL = '#007f81';
+const EMAIL_DARK = '#2a6465';
+
+function emailEsc_(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** Escapes text, turns bare links into links, and keeps line breaks. */
+function emailInline_(s) {
+  return emailEsc_(s)
+    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:' + EMAIL_TEAL + ';">$1</a>')
+    .replace(/\n/g, '<br>');
+}
+
+function emailButton_(label, url) {
+  return '<p style="margin:0 0 18px;"><a href="' + emailEsc_(url) + '" style="display:inline-block;background:' + EMAIL_TEAL
+    + ';color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;padding:11px 22px;border-radius:8px;">'
+    + emailEsc_(label) + '</a></p>';
+}
+
+function renderEmail_(blocks) {
+  const text = [];
+  const html = [];
+  const indent = function (t, pad) {
+    return String(t).split('\n').map(function (l) { return l ? pad + l : l; }).join('\n');
+  };
+
+  blocks.forEach(function (b) {
+    if (b.p !== undefined) {
+      text.push(b.p);
+      html.push('<p style="margin:0 0 14px;">' + emailInline_(b.p) + '</p>');
+
+    } else if (b.h !== undefined) {
+      text.push(String(b.h).toUpperCase());
+      html.push('<p style="margin:22px 0 8px;font-size:12px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:'
+        + EMAIL_TEAL + ';">' + emailEsc_(b.h) + '</p>');
+
+    } else if (b.quote !== undefined) {
+      text.push(indent(b.quote, '    '));
+      html.push('<div style="margin:0 0 16px;padding:12px 16px;background:#f4faf9;border-left:4px solid #00adad;border-radius:4px;">'
+        + emailInline_(b.quote) + '</div>');
+
+    } else if (b.ol !== undefined) {
+      text.push(b.ol.map(function (item, i) {
+        return (i + 1) + '. ' + String(item).replace(/\n/g, '\n   ');
+      }).join('\n\n'));
+      html.push('<ol style="margin:0 0 14px;padding-left:22px;">' + b.ol.map(function (item) {
+        return '<li style="margin:0 0 10px;">' + emailInline_(item) + '</li>';
+      }).join('') + '</ol>');
+
+    } else if (b.box !== undefined) {
+      text.push('--------------------\n' + b.box + '\n--------------------');
+      // The To / CC / Subject lines read better with bold labels.
+      const lines = String(b.box).split('\n').map(function (l) {
+        const m = l.match(/^(To|CC|Subject):(.*)$/);
+        return m ? '<b>' + m[1] + ':</b>' + emailInline_(m[2]) : emailInline_(l);
+      });
+      html.push('<div style="margin:0 0 16px;padding:14px 16px;background:#ffffff;border:1px solid #cfe3e1;border-radius:8px;font-size:14px;line-height:1.55;">'
+        + lines.join('<br>') + '</div>');
+
+    } else if (b.code !== undefined) {
+      text.push('    ' + b.code);
+      html.push('<div style="margin:0 0 16px;padding:16px;background:#f4faf9;border:1px solid #dfeceb;border-radius:8px;text-align:center;'
+        + 'font-size:32px;font-weight:700;letter-spacing:8px;color:' + EMAIL_DARK + ';">' + emailEsc_(b.code) + '</div>');
+
+    } else if (b.button !== undefined) {
+      text.push(b.button.label + ':\n' + b.button.url);
+      html.push(emailButton_(b.button.label, b.button.url));
+
+    } else if (b.portal) {
+      if (!PORTAL_URL) return;
+      text.push('You can see the details anytime in your BRYC Senior Portal:\n' + PORTAL_URL);
+      html.push(emailButton_('Open your BRYC Senior Portal', PORTAL_URL));
+
+    } else if (b.sign !== undefined) {
+      text.push(b.sign);
+      html.push('<p style="margin:22px 0 0;">' + emailEsc_(b.sign) + '</p>');
+    }
+  });
+
+  const page = '<div style="background:#f4faf9;padding:24px 12px;font-family:Arial,Helvetica,sans-serif;">'
+    + '<div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #dfeceb;border-radius:10px;overflow:hidden;">'
+    + '<div style="background:' + EMAIL_DARK + ';padding:16px 24px;color:#ffffff;font-size:20px;font-weight:700;letter-spacing:1px;">BRYC'
+    + '<span style="font-weight:400;font-size:13px;letter-spacing:0;margin-left:10px;opacity:0.85;">Senior Portal</span></div>'
+    + '<div style="padding:24px;color:#1c2b2b;font-size:15px;line-height:1.6;">' + html.join('') + '</div>'
+    + '<div style="padding:14px 24px;background:#f4faf9;border-top:1px solid #dfeceb;color:#5b7573;font-size:12px;">Baton Rouge Youth Coalition</div>'
+    + '</div></div>';
+
+  return { text: text.join('\n\n'), html: page };
 }
 
 
@@ -702,7 +801,7 @@ function handleNotifyStudent(e) {
   const map = resolveColumns_(rows[0]);
   const row = rows[sheetRow - 1];
 
-  const res = sendNotification_(row, map, kind, admin);
+  const res = sendNotification_(row, map, kind, admin, sheetRow);
   // Record what went out so the background sweep does not repeat it.
   if (res.status === 'ok') {
     try { markNotified_(sheet, rows[0], sheetRow, notificationSignature_(row, map)); }
@@ -722,74 +821,75 @@ function composeNotification_(row, map, kind) {
 
   const first = str_(row, map, 'name').split(/\s+/)[0] || 'there';
   const kindOf = friendlyType_(requestTypeOf_(row, map));
+  const DASH = '—';
+  const isPay = isPaymentRequest_(row, map);
 
-  let subject, body;
+  let subject;
+  let sign = 'The BRYC Team';
   let extraCc = '';   // anyone besides the counselor who is copied on this kind
+  const blocks = [{ p: 'Hi ' + first + ',' }];
 
   if (kind === 'fulfilled') {
     subject = 'Your BRYC ' + kindOf + ' is complete';
-    body = 'Hi ' + first + ',\n\n'
-      + (isPaymentRequest_(row, map)
-          ? 'Good news -- BRYC has paid the fee for your ' + kindOf + '. It has come out of your senior funds, and your updated balance is in your portal.\n'
-          : 'Good news -- your ' + kindOf + ' has been taken care of.\n')
-      + portalLinkLine_()
-      + '\nIf something does not look right, reply to your BRYC counselor or advisor.\n\nThe BRYC Team';
+    blocks.push({ p: isPay
+      ? 'Good news ' + DASH + ' BRYC has paid the fee for your ' + kindOf + '. It has come out of your senior funds, and your updated balance is in your portal.'
+      : 'Good news ' + DASH + ' your ' + kindOf + ' has been taken care of.' });
+    blocks.push({ portal: true });
+    blocks.push({ p: 'If something does not look right, please talk with your BRYC counselor or advisor.' });
 
   } else if (kind === 'declined') {
     const reason = String(cell_(row, map, '_MessagetoStudent') || '').trim();
     if (!reason) return { error: 'Add a reason for the student before sending this.' };
     subject = 'An update on your BRYC ' + kindOf + ': we were not able to complete it';
-    body = 'Hi ' + first + ',\n\n'
-      + 'Thank you for submitting your ' + kindOf + '. We are sorry -- BRYC was not able to fulfill it.\n\n'
-      + 'Why:\n\n'
-      + '    ' + reason + '\n\n'
-      + (isPaymentRequest_(row, map)
-          ? 'Nothing has been taken out of your senior funds for this request.\n'
-          : '')
-      + portalLinkLine_()
-      + '\nIf you still need this, please talk with your BRYC counselor or advisor about next steps. '
-      + 'You are always welcome to submit a new request.\n\nThe BRYC Team';
+    blocks.push({ p: 'Thank you for submitting your ' + kindOf + '. We are sorry ' + DASH + ' BRYC was not able to fulfill it.' });
+    blocks.push({ h: 'Why' });
+    blocks.push({ quote: reason });
+    if (isPay) blocks.push({ p: 'Nothing has been taken out of your senior funds for this request.' });
+    blocks.push({ portal: true });
+    blocks.push({ p: 'If you still need this, please talk with your BRYC counselor or advisor about next steps. You are always welcome to submit a new request.' });
 
   } else if (kind === 'nacac') {
+    // Written in Ms. Jakia's own voice: she is the one sending it and she signed the form.
     const note = String(cell_(row, map, '_MessagetoStudent') || '').trim();
     const plan = nacacPlan_(row, map);
     extraCc = 'jakia@' + ADMIN_EMAIL_DOMAIN;   // Ms. Jakia is copied on every NACAC email
+    const collegeOr = plan.college || 'the name of your college';
     const where = plan.college ? 'the admissions office at ' + plan.college : 'the college\'s admissions office';
+    sign = SENDER_NAME;
     subject = 'An update on your BRYC ' + kindOf + ': please complete a NACAC fee waiver';
-    body = 'Hi ' + first + ',\n\n'
-      + 'Thank you for submitting your ' + kindOf + '. '
+    blocks.push({ p: 'Thank you for submitting your ' + kindOf + '. '
       + (plan.college ? 'For your application to ' + plan.college : 'For this application')
       + ', you will complete a NACAC fee waiver instead of using your senior funds to pay the application fee. '
-      + 'Ms. Jakia has already filled in her part and signed it, so you only have a few steps.\n\n'
-      + (note ? 'A note from your counselor:\n\n    ' + note + '\n\n' : '')
-      + 'WHAT TO DO\n\n'
-      + '1. Open the waiver form and download it:\n   ' + plan.waiverUrl + '\n\n'
-      + '2. Fill in your part and sign it. Write ' + (plan.college || 'the name of your college') + ' on the "To: Dean/Director of Admission at" line, '
-      + 'then add your name, address, city, state and ZIP, and sign the student certification statement. '
-      + 'You can type into the PDF, or print it, sign it and take a clear scan or photo. Please do not change anything else on the form.\n\n'
-      + '3. Email the completed form to ' + where + ' as an attachment. Look on the college\'s admissions website for the right email address. '
-      + 'Send it directly to the college yourself. Do not send it to BRYC to forward.\n\n'
-      + '4. CC ' + plan.cc.join(' and ') + ' on that email so we can follow up with the school.\n\n'
-      + 'EMAIL TO COPY AND PASTE\n\n'
-      + 'To: [the admissions office email address]\n'
+      + 'I have already filled in and signed my part, so you only have a few steps.' });
+    if (note) { blocks.push({ h: 'A note from your counselor' }); blocks.push({ quote: note }); }
+    blocks.push({ button: { label: 'Open the waiver form', url: plan.waiverUrl } });
+    blocks.push({ h: 'What to do' });
+    blocks.push({ ol: [
+      'Download the waiver form using the "Open the waiver form" link above.',
+      'Fill in your part and sign it. Write ' + collegeOr + ' on the "To: Dean/Director of Admission at" line, '
+        + 'then add your name, address, city, state and ZIP, and sign the student certification statement. '
+        + 'You can type into the PDF, or print it, sign it and take a clear scan or photo. Please do not change anything else on the form.',
+      'Email the completed form to ' + where + ' as an attachment. Look on the college\'s admissions website for the right email address. '
+        + 'Send it directly to the college yourself. Do not send it to BRYC to forward.',
+      'CC ' + plan.cc.join(' and ') + ' on that email so we can follow up with the school.'
+    ] });
+    blocks.push({ h: 'Email to copy and paste' });
+    blocks.push({ box: 'To: [the admissions office email address]\n'
       + 'CC: ' + plan.cc.join(', ') + '\n'
       + 'Subject: ' + plan.templateSubject + '\n\n'
-      + plan.templateBody + '\n\n'
-      + '(Remember to attach the completed form, and fill in the details in [brackets].)\n\n'
-      + 'Nothing has been taken out of your senior funds for this request.\n'
-      + portalLinkLine_()
-      + '\nIf you have any questions, talk with your BRYC counselor or advisor. '
-      + 'You are always welcome to submit a new request.\n\nThe BRYC Team';
+      + plan.templateBody });
+    blocks.push({ p: 'Remember to attach the completed form, and fill in the details in [brackets].' });
+    blocks.push({ p: 'Nothing has been taken out of your senior funds for this request.' });
+    blocks.push({ portal: true });
+    blocks.push({ p: 'If you have any questions, talk with your BRYC counselor or advisor. You are always welcome to submit a new request.' });
 
   } else if (kind === 'message') {
     const message = String(cell_(row, map, '_MessagetoStudent') || '').trim();
     if (!message) return { error: 'There is no message on that row to send.' };
     subject = 'An update on your BRYC ' + kindOf;
-    body = 'Hi ' + first + ',\n\n'
-      + 'Your BRYC counselor left you a note about your ' + kindOf + ':\n\n'
-      + '    ' + message + '\n'
-      + portalLinkLine_()
-      + '\nThe BRYC Team';
+    blocks.push({ p: 'Your BRYC counselor left you a note about your ' + kindOf + ':' });
+    blocks.push({ quote: message });
+    blocks.push({ portal: true });
 
   } else if (kind === 'stage') {
     // Progress update. "Complete" is deliberately NOT handled here -- that goes
@@ -797,28 +897,30 @@ function composeNotification_(row, map, kind) {
     const stage = normalizeStage_(cell_(row, map, '_Stage'));
     const lines = {
       'Received':    'We have your ' + kindOf + ' and it is in the queue. Your counselor will review it shortly.',
-      'In progress': isPaymentRequest_(row, map)
-                       ? 'Your ' + kindOf + ' is being worked on by your BRYC counselor. BRYC will arrange the payment -- you do not need to pay anything yourself.'
+      'In progress': isPay
+                       ? 'Your ' + kindOf + ' is being worked on by your BRYC counselor. BRYC will arrange the payment ' + DASH + ' you do not need to pay anything yourself.'
                        : 'Your ' + kindOf + ' is being worked on by your BRYC counselor now.'
     };
     if (!lines[stage]) {
       return { error: 'No update email is sent for the stage "' + stage + '".' };
     }
     subject = 'Update on your BRYC ' + kindOf + ': ' + stage;
-    body = 'Hi ' + first + ',\n\n'
-      + lines[stage] + '\n'
-      + portalLinkLine_()
-      + '\nNo action is needed from you unless your counselor asks.\n\nThe BRYC Team';
+    blocks.push({ p: lines[stage] });
+    blocks.push({ portal: true });
+    blocks.push({ p: 'No action is needed from you unless your counselor asks.' });
 
   } else {
     return { error: 'Unknown notification type.' };
   }
 
+  blocks.push({ sign: sign });
+  const mail = renderEmail_(blocks);
+
   // Counselor first, then anyone extra, each once, and never the recipient.
   const ccList = [ccFor_(row, map, to), extraCc].filter(function (a, i, all) {
     return a && a !== to && all.indexOf(a) === i;
   });
-  return { to: to, cc: ccList.join(','), subject: subject, body: body };
+  return { to: to, cc: ccList.join(','), subject: subject, body: mail.text, html: mail.html };
 }
 
 /**
@@ -894,11 +996,11 @@ function ccFor_(row, map, to) {
   return cc && cc !== normalizeEmail_(to) ? cc : '';
 }
 
-function sendNotification_(row, map, kind, sentBy) {
+function sendNotification_(row, map, kind, sentBy, sheetRow) {
   const msg = composeNotification_(row, map, kind);
   if (msg.error) return { status: 'error', message: msg.error };
   try {
-    const mail = { to: msg.to, name: SENDER_NAME, subject: msg.subject, body: msg.body };
+    const mail = { to: msg.to, name: SENDER_NAME, subject: msg.subject, body: msg.body, htmlBody: msg.html };
     if (msg.cc) mail.cc = msg.cc;
     MailApp.sendEmail(mail);
   } catch (err) {
@@ -909,6 +1011,11 @@ function sendNotification_(row, map, kind, sentBy) {
   // told a student and when. Logging must never break the send itself.
   try { logComm_(row, map, kind, msg, sentBy); }
   catch (err) { console.error('Comms log write failed: ' + err); }
+  // Everyone handed a NACAC waiver is also tracked on the NACAC Waivers tab.
+  if (kind === 'nacac') {
+    try { logNacac_(row, map, sheetRow); }
+    catch (err) { console.error('NACAC log write failed: ' + err); }
+  }
   return { status: 'ok', sentTo: msg.to };
 }
 
@@ -1014,7 +1121,7 @@ function sweepNotifications() {
 
       const kind = kindForChange_(prev, sig);
       if (kind) {
-        const res = sendNotification_(row, map, kind, 'Automatic');
+        const res = sendNotification_(row, map, kind, 'Automatic', i + 1);
         if (res.status === 'ok') sent++;
         else { skipped++; console.log('Row ' + (i + 1) + ': ' + (res.message || res.status)); }
       }
@@ -1087,6 +1194,48 @@ function commsSheet_() {
     sheet.getRange(1, 1, 1, COMMS_HEADERS.length).setValues([COMMS_HEADERS]).setFontWeight('bold');
   }
   return sheet;
+}
+
+/* ---------------------------------------------------------------------------
+ * NACAC WAIVERS -- who has been handed a NACAC fee waiver, and where it stands.
+ * One row per request, added the first time that fellow is emailed the waiver
+ * (from the dashboard OR from the background sweep). Sending again only refreshes
+ * the date; Status and Notes are filled in by staff and never overwritten here.
+ * ------------------------------------------------------------------------ */
+const NACAC_SHEET = 'NACAC Waivers';
+const NACAC_HEADERS = ['Date Sent', 'Fellow', 'Email', 'College', 'Counselor', 'Request Row', 'Status', 'Notes'];
+const NACAC_STATUSES = ['Sent to fellow', 'Fellow emailed the school', 'Fee waived', 'Not waived'];
+
+function nacacSheet_() {
+  const ss = tracker_();
+  let sheet = ss.getSheetByName(NACAC_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(NACAC_SHEET);
+    sheet.appendRow(NACAC_HEADERS);
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, NACAC_HEADERS.length).setFontWeight('bold');
+  }
+  return sheet;
+}
+
+function logNacac_(row, map, sheetRow) {
+  const sheet = nacacSheet_();
+  const email = normalizeEmail_(cell_(row, map, 'email'));
+  const college = str_(row, map, 'college');
+  const entry = [new Date(), str_(row, map, 'name'), email, college, counselorName_(row, map), sheetRow || ''];
+
+  const last = sheet.getLastRow();
+  const existing = last > 1 ? sheet.getRange(2, 1, last - 1, NACAC_HEADERS.length).getValues() : [];
+  for (let i = 0; i < existing.length; i++) {
+    const same = sheetRow
+      ? Number(existing[i][5]) === Number(sheetRow)
+      : (normalizeEmail_(existing[i][2]) === email && String(existing[i][3]) === college);
+    if (same) {
+      sheet.getRange(i + 2, 1, 1, entry.length).setValues([entry]);   // refresh; keep Status / Notes
+      return;
+    }
+  }
+  sheet.appendRow(entry.concat([NACAC_STATUSES[0], '']));
 }
 
 const COMMS_LABELS = {
@@ -1208,18 +1357,21 @@ function handleRequestPin(rawEmail) {
   cache.remove('att:' + key);
 
   try {
+    // Deliberately never copied to anyone: the code is a credential.
+    const pinMail = renderEmail_([
+      { p: 'Your one-time BRYC Senior Portal sign-in code is:' },
+      { code: pin },
+      { p: 'It expires in 10 minutes and can only be used once.' },
+      { p: 'If you did not try to sign in, you can ignore this email \u2014 nobody can see your information without this code. '
+           + 'Let your BRYC counselor or advisor know if you keep getting codes you did not ask for.' },
+      { sign: 'The BRYC Team' }
+    ]);
     MailApp.sendEmail({
       to: email,
       name: SENDER_NAME,
       subject: 'Your BRYC sign-in code: ' + pin,
-      body:
-        'Your one-time BRYC Senior Portal sign-in code is:\n\n' +
-        '    ' + pin + '\n\n' +
-        'It expires in 10 minutes and can only be used once.\n\n' +
-        'If you did not try to sign in, you can ignore this email -- nobody can see your\n' +
-        'information without this code. Let your BRYC counselor or advisor know if you\n' +
-        'keep getting codes you did not ask for.\n\n' +
-        'The BRYC Team'
+      body: pinMail.text,
+      htmlBody: pinMail.html
     });
   } catch (err) {
     console.error('PIN email failed: ' + err);
@@ -1591,14 +1743,18 @@ function onFormSubmit(e) {
     const kindOf = friendlyType_(requestTypeOf_(row, map));
 
     const subject = 'We got your BRYC ' + kindOf;
-    const body = 'Hi ' + first + ',\n\n'
-      + 'We have your ' + kindOf + ' — it is in the queue and your BRYC counselor or advisor '
-      + 'will review it shortly. You do not need to do anything else right now.\n'
-      + portalLinkLine_()
-      + '\nYou will hear from us again as it moves along.\n\nThe BRYC Team';
+    const rendered = renderEmail_([
+      { p: 'Hi ' + first + ',' },
+      { p: 'We have your ' + kindOf + ' \u2014 it is in the queue and your BRYC counselor or advisor '
+           + 'will review it shortly. You do not need to do anything else right now.' },
+      { portal: true },
+      { p: 'You will hear from us again as it moves along.' },
+      { sign: 'The BRYC Team' }
+    ]);
+    const body = rendered.text;
 
     const cc = ccFor_(row, map, to);
-    const mail = { to: to, name: SENDER_NAME, subject: subject, body: body };
+    const mail = { to: to, name: SENDER_NAME, subject: subject, body: body, htmlBody: rendered.html };
     if (cc) mail.cc = cc;
     MailApp.sendEmail(mail);
     // This one used to send straight through MailApp and skip the log entirely,

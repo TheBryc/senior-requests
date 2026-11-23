@@ -486,6 +486,16 @@
     .msg-kind{margin-bottom:3px;}
   }
 #staff .save-note{font-size:11.5px;color:var(--muted);}
+  #staff .nlog{display:flex;flex-direction:column;background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+  #staff .nlog-row{display:grid;grid-template-columns:110px 1fr 1fr 90px 170px 1.2fr 64px;gap:10px;align-items:center;
+    padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px;}
+  #staff .nlog-row:last-child{border-bottom:0;}
+  #staff .nlog-head{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);background:var(--page-bg);}
+  #staff .nlog-when{color:var(--muted);white-space:nowrap;}
+  #staff .nlog-who{font-weight:600;}
+  #staff .nlog-status,#staff .nlog-notes{width:100%;border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12.5px;font-family:inherit;background:#fff;color:var(--ink);}
+  #staff .btn-nlog-save{background:var(--mid-teal);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12.5px;font-weight:700;}
+  #staff .btn-nlog-save:disabled{opacity:.5;}
   #staff .clog-item{border-bottom:1px solid var(--border);}
   #staff .clog-item:last-child{border-bottom:0;}
   #staff .clog-item > summary{cursor:pointer;list-style:none;border-bottom:0;}
@@ -517,6 +527,7 @@
   #staff .clog-open:not(:empty)::after{content:" \25BE";}
   #staff .clog-item[open] .clog-open::after{content:" \25B4";}
   @media (max-width:900px){
+    #staff .nlog-row{grid-template-columns:1fr 1fr;gap:6px 12px;}
     #staff .clog-row{grid-template-columns:1fr 1fr;gap:4px 12px;}
     #staff .clog-open{text-align:left;}
     #staff .clog-head{display:none;}
@@ -682,6 +693,7 @@
       <button id="view-all">All requests</button>
       <button id="view-comms">Comms</button>
       <button id="view-holds">Funds holds</button>
+      <button id="view-nacac">NACAC waivers</button>
     </div>
     <input class="search-input" id="search-input" type="text" placeholder="Search by name…" />
     <label class="toggle-row" style="margin-left:0;"><input type="checkbox" id="email-students" checked /> Email students on changes</label>
@@ -1806,6 +1818,10 @@ const COMMS_SHEET = "Comms Log";           // written by the Apps Script; read-o
 // One row per fellow whose senior funds counselors have put on hold. The portal
 // only ever learns "on hold: yes/no" from this -- the note never leaves the tab.
 const FUNDS_STATUS_SHEET = "Funds Status";
+// Written by the Apps Script the first time a fellow is emailed a NACAC fee waiver;
+// staff update Status / Notes here. One row per request.
+const NACAC_SHEET = "NACAC Waivers";
+const NACAC_STATUSES = ["Sent to fellow", "Fellow emailed the school", "Fee waived", "Not waived"];
 const FUNDS_STATUS_HEADERS = ["Fellow Name", "Email", "Status", "Internal note", "Updated"];
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 
@@ -1946,6 +1962,7 @@ let responses = [];       // parsed rows from "Form Responses"
 let colMap = {};          // resolved header positions
 let feeRows = [];         // parsed rows from "Fee Payment Balance"
 let commsRows = [];       // every email BRYC has sent, newest first
+let nacacRows = [];       // everyone handed a NACAC fee waiver, newest first
 let holdRows = [];        // parsed rows from "Funds Status"
 let holdsRawLen = 0;      // rows on that tab incl. header, so the next write knows where to land
 let feeLayout = null;     // where the columns and triplets are
@@ -2508,7 +2525,9 @@ function loadData(){
     // Created by the backend on its first send, so "missing" is normal at first.
     sheetsGet(a1(COMMS_SHEET, "A1:I")).catch(function(){ return []; }),
     // Created the first time a counselor puts someone on hold, so absent is normal.
-    sheetsGet(a1(FUNDS_STATUS_SHEET, "A1:E")).catch(function(){ return []; })
+    sheetsGet(a1(FUNDS_STATUS_SHEET, "A1:E")).catch(function(){ return []; }),
+    // Created by the backend the first time a NACAC waiver goes out, so absent is normal.
+    sheetsGet(a1(NACAC_SHEET, "A1:H")).catch(function(){ return []; })
   ]).then(function(results){
     return ensureTrackingColumns(results[0]).then(function(rows){
       colMap = rows.length ? resolveColumns(rows[0]) : {};
@@ -2520,6 +2539,7 @@ function loadData(){
       commsRows = parseComms(results[3]);
       holdsRawLen = (results[4] || []).length;
       holdRows = parseHolds(results[4]);
+      nacacRows = parseNacac(results[5]);
       computeRosterOnly();
       applyCounselorDefault();
 
@@ -2673,6 +2693,100 @@ function renderComms(){
     + "</div>";
 }
 
+/* ---------- NACAC waivers ----------
+ * The "NACAC Waivers" tab is filled in by the backend each time a fellow is
+ * emailed the waiver. Here staff follow each one through to the school's answer. */
+function parseNacac(rows){
+  if(!rows || rows.length < 2) return [];
+  const head = rows[0].map(function(h){ return String(h || "").trim().toLowerCase(); });
+  const at = function(n){ return head.indexOf(n); };
+  const iWhen = at("date sent"), iWho = at("fellow"), iMail = at("email"), iCol = at("college"),
+        iCoun = at("counselor"), iReq = at("request row"), iStat = at("status"), iNote = at("notes");
+  const get = function(row, i){ return i > -1 ? String(row[i] == null ? "" : row[i]).trim() : ""; };
+  return rows.slice(1).map(function(row, i){
+    return { tabRow: i + 2, when: get(row, iWhen), name: get(row, iWho), email: get(row, iMail).toLowerCase(),
+             college: get(row, iCol), counselor: get(row, iCoun), requestRow: get(row, iReq),
+             status: get(row, iStat) || NACAC_STATUSES[0], notes: get(row, iNote) };
+  }).filter(function(n){ return n.name || n.email; }).reverse();   // newest first
+}
+
+function renderNacac(){
+  const container = document.getElementById("list");
+  const note = document.getElementById("count-note");
+  container.className = "list";
+
+  const q = String(searchTerm || "").trim().toLowerCase();
+  let list = nacacRows.slice();
+  if(q){
+    list = list.filter(function(n){
+      return n.name.toLowerCase().indexOf(q) !== -1 || n.email.indexOf(q) !== -1 || n.college.toLowerCase().indexOf(q) !== -1;
+    });
+  }
+  if(mineOnly && userEmail){
+    const mine = String(counselorLabelFor(userEmail) || "").replace(/\s*\(.*\)\s*$/, "").toLowerCase();
+    if(mine) list = list.filter(function(n){ return n.counselor.toLowerCase() === mine; });
+  }
+
+  const counts = {};
+  list.forEach(function(n){ counts[n.status] = (counts[n.status] || 0) + 1; });
+  note.textContent = list.length + " NACAC waiver" + (list.length === 1 ? "" : "s")
+    + (list.length ? " \u00b7 " + NACAC_STATUSES.filter(function(s){ return counts[s]; })
+        .map(function(s){ return counts[s] + " " + s.toLowerCase(); }).join(", ") : "");
+
+  if(!nacacRows.length){
+    container.innerHTML = '<div class="empty-state">No one has been given a NACAC fee waiver yet. '
+      + "When you use \u201cNACAC fee waiver\u201d on a college application fee request, that fellow shows up here.</div>";
+    return;
+  }
+  if(!list.length){
+    container.innerHTML = '<div class="empty-state">No NACAC waivers match this view.</div>';
+    return;
+  }
+
+  container.innerHTML = '<div class="nlog">'
+    + '<div class="nlog-row nlog-head"><span>Sent</span><span>Fellow</span><span>College</span><span>Counselor</span>'
+    +   "<span>Status</span><span>Notes</span><span></span></div>"
+    + list.map(function(n){
+        const opts = NACAC_STATUSES.concat(NACAC_STATUSES.indexOf(n.status) === -1 ? [n.status] : []);
+        return '<div class="nlog-row" data-nrow="' + n.tabRow + '">'
+          + '<span class="nlog-when">' + escapeHtml(n.when) + "</span>"
+          + '<span class="nlog-who">' + escapeHtml(n.name || n.email) + "</span>"
+          + "<span>" + escapeHtml(n.college || "\u2014") + "</span>"
+          + "<span>" + escapeHtml(n.counselor || "\u2014") + "</span>"
+          + '<select class="nlog-status">' + opts.map(function(o){
+              return '<option value="' + escapeHtml(o) + '"' + (o === n.status ? " selected" : "") + ">" + escapeHtml(o) + "</option>";
+            }).join("") + "</select>"
+          + '<input type="text" class="nlog-notes" placeholder="e.g. emailed UT admissions 11/24" value="' + escapeHtml(n.notes) + '" />'
+          + '<button class="btn-nlog-save" data-nrow="' + n.tabRow + '">Save</button>'
+          + "</div>";
+      }).join("")
+    + "</div>";
+
+  container.querySelectorAll(".btn-nlog-save").forEach(function(btn){
+    btn.addEventListener("click", function(){ saveNacac(btn.getAttribute("data-nrow")); });
+  });
+}
+
+function saveNacac(tabRowStr){
+  const n = nacacRows.find(function(x){ return String(x.tabRow) === String(tabRowStr); });
+  const rowEl = document.querySelector('[data-nrow="' + tabRowStr + '"]');
+  if(!n || !rowEl) return;
+  const status = rowEl.querySelector(".nlog-status").value;
+  const notes = rowEl.querySelector(".nlog-notes").value.trim();
+  const btn = rowEl.querySelector(".btn-nlog-save");
+  btn.disabled = true; btn.textContent = "Saving\u2026";
+  sheetsUpdate(a1(NACAC_SHEET, "G" + n.tabRow + ":H" + n.tabRow), [[status, notes]])
+    .then(function(){
+      n.status = status; n.notes = notes;
+      showToast("Saved " + (n.name || "that fellow") + "\u2019s NACAC waiver status.");
+      renderNacac();
+    })
+    .catch(function(e){
+      btn.disabled = false; btn.textContent = "Save";
+      showToast(e.message || "Couldn\u2019t save that.");
+    });
+}
+
 function renderFilterTabs(){
   const el = document.getElementById("filter-tabs");
   el.innerHTML = FILTERS.map(function(f){
@@ -2779,6 +2893,7 @@ function render(){
   renderSummary();
   if(viewMode === "comms"){ renderComms(); return; }
   if(viewMode === "holds"){ renderHolds(); return; }
+  if(viewMode === "nacac"){ renderNacac(); return; }
   const list = visibleList();
   document.getElementById("count-note").textContent = list.length + " request" + (list.length === 1 ? "" : "s");
 
@@ -3966,12 +4081,14 @@ window.__staffBoot = function(){
     document.getElementById("view-all").classList.toggle("active", mode === "all");
     document.getElementById("view-comms").classList.toggle("active", mode === "comms");
     document.getElementById("view-holds").classList.toggle("active", mode === "holds");
+    document.getElementById("view-nacac").classList.toggle("active", mode === "nacac");
     render();
   };
   document.getElementById("view-queue").addEventListener("click", function(){ setView("queue"); });
   document.getElementById("view-all").addEventListener("click", function(){ setView("all"); });
   document.getElementById("view-comms").addEventListener("click", function(){ setView("comms"); });
   document.getElementById("view-holds").addEventListener("click", function(){ setView("holds"); });
+  document.getElementById("view-nacac").addEventListener("click", function(){ setView("nacac"); });
 };
 })();
 </script>
