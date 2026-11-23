@@ -755,9 +755,9 @@ function composeNotification_(row, map, kind) {
     const where = plan.college ? 'the admissions office at ' + plan.college : 'the college\'s admissions office';
     subject = 'An update on your BRYC ' + kindOf + ': please complete a NACAC fee waiver';
     body = 'Hi ' + first + ',\n\n'
-      + 'Thank you for submitting your ' + kindOf + '. Instead of paying the application fee from your senior funds, '
-      + plan.counselorName + ' would like you to complete a NACAC fee waiver'
-      + (plan.college ? ' for ' + plan.college : '') + '. '
+      + 'Thank you for submitting your ' + kindOf + '. '
+      + (plan.college ? 'For your application to ' + plan.college : 'For this application')
+      + ', you will complete a NACAC fee waiver instead of using your senior funds to pay the application fee. '
       + 'Ms. Jakia has already filled in her part and signed it, so you only have a few steps.\n\n'
       + (note ? 'A note from your counselor:\n\n    ' + note + '\n\n' : '')
       + 'WHAT TO DO\n\n'
@@ -863,8 +863,8 @@ function nacacPlan_(row, map) {
   const body = 'Dear Dean/Director of Admission,\n\n'
     + 'My name is ' + (fullName || '[Your full name]') + ', and I am a senior applying to ' + (college || '[College name]') + '. '
     + 'I am a Fellow with the Baton Rouge Youth Coalition (BRYC) and I am requesting an application fee waiver.\n\n'
-    + 'I have attached the NACAC Request for Admission Application Fee Waiver form. It has been completed and signed by '
-    + 'Ms. Jakia, the Director of Senior Counseling at BRYC, and by me.\n\n'
+    + 'Attached is a completed application fee waiver form (the NACAC Request for Admission Application Fee Waiver). '
+    + 'It has been completed and signed by Ms. Jakia, the Director of Senior Counseling at BRYC, and by me.\n\n'
     + 'Please let me know if you need anything else to process the waiver. '
     + (jakiaIsCounselor
         ? 'I have copied Ms. Jakia, who is happy to answer any questions.'

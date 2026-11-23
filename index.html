@@ -1506,10 +1506,9 @@ function requestBodyHtml(r){
   // A next step, not a refusal, so it must not read like the "unable" box below.
   if(r.stage === NACAC_STAGE && !r.fulfilled){
     const p = r.nacac || null;
-    const who = p ? p.counselorName : "Your BRYC counselor";
     let n = '<div class="next-step"><b>Complete a NACAC fee waiver</b>'
-      + escapeHtml(who) + " would like you to complete a NACAC fee waiver"
-      + (p && p.college ? " for " + escapeHtml(p.college) : "") + " instead of paying the fee from your senior funds. "
+      + (p && p.college ? "For your application to " + escapeHtml(p.college) : "For this application")
+      + ", you&rsquo;ll complete a NACAC fee waiver instead of using your senior funds to pay the application fee. "
       + "Ms. Jakia has already filled in her part and signed it, so you only have a few steps.</div>";
     if(r.message){
       n += '<div class="next-step"><b>A note from your counselor</b>' + escapeHtml(r.message) + "</div>";
