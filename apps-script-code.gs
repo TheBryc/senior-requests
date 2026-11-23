@@ -724,6 +724,7 @@ function composeNotification_(row, map, kind) {
   const kindOf = friendlyType_(requestTypeOf_(row, map));
 
   let subject, body;
+  let extraCc = '';   // anyone besides the counselor who is copied on this kind
 
   if (kind === 'fulfilled') {
     subject = 'Your BRYC ' + kindOf + ' is complete';
@@ -752,6 +753,7 @@ function composeNotification_(row, map, kind) {
   } else if (kind === 'nacac') {
     const note = String(cell_(row, map, '_MessagetoStudent') || '').trim();
     const plan = nacacPlan_(row, map);
+    extraCc = 'jakia@' + ADMIN_EMAIL_DOMAIN;   // Ms. Jakia is copied on every NACAC email
     const where = plan.college ? 'the admissions office at ' + plan.college : 'the college\'s admissions office';
     subject = 'An update on your BRYC ' + kindOf + ': please complete a NACAC fee waiver';
     body = 'Hi ' + first + ',\n\n'
@@ -812,7 +814,11 @@ function composeNotification_(row, map, kind) {
     return { error: 'Unknown notification type.' };
   }
 
-  return { to: to, cc: ccFor_(row, map, to), subject: subject, body: body };
+  // Counselor first, then anyone extra, each once, and never the recipient.
+  const ccList = [ccFor_(row, map, to), extraCc].filter(function (a, i, all) {
+    return a && a !== to && all.indexOf(a) === i;
+  });
+  return { to: to, cc: ccList.join(','), subject: subject, body: body };
 }
 
 /**
