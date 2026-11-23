@@ -1440,14 +1440,21 @@ document.addEventListener("click", function(e){
   }
 });
 
-/** What a finished coach / login request says: the thing was sent, check your email. "" for other types. */
+/** What a finished coach / login / partner request says: check your email. null for other types. */
 function completionLineFor(r){
   const t = String(r.type || "");
-  if(t.indexOf("writing coach") > -1) return "You have been connected with your Writing Coach. Check your email \u2014 they will be reaching out to you.";
-  if(t.indexOf("UWorld") > -1) return "Your UWorld login information has been shared with you. Check your email.";
-  if(t.indexOf("College Aid Pro") > -1) return "Your College Aid Pro access has been set up. Check your email for your login information.";
-  if(t.indexOf("MasteryPrep") > -1) return "Your MasteryPrep login information has been shared with you. Check your email.";
-  return "";
+  if(t.indexOf("writing coach") > -1) return { head: "Check your email", text: "You have been connected with your Writing Coach. Check your email \u2014 they will be reaching out to you." };
+  if(t.indexOf("UWorld") > -1) return { head: "Check your email", text: "Your UWorld login information has been shared with you. Check your email." };
+  if(t.indexOf("College Aid Pro") > -1) return { head: "Check your email", text: "Your College Aid Pro access has been set up. Check your email for your login information." };
+  if(t.indexOf("MasteryPrep") > -1) return { head: "Check your email", text: "Your MasteryPrep login information has been shared with you. Check your email." };
+  if(t.indexOf("fee waiver for a BRYC partner school") > -1){
+    // Either the school was sent their information, or the counselor shared the
+    // school's fee waiver code in a note (shown above this box).
+    if(r.message) return { head: "Your fee waiver information", text: "Your partner school fee waiver information is ready \u2014 see the note from your counselor above." };
+    const school = detailValue(r, "Partner school");
+    return { head: "Check your email", text: "Your information has been shared with " + (school || "your partner school") + ". Check your email for next steps from the school." };
+  }
+  return null;
 }
 
 function nextStepFor(r){
@@ -1588,11 +1595,11 @@ function requestBodyHtml(r){
   }
 
   // Coach / login requests finish by sending the fellow something, so point them to their inbox.
-  const checkEmail = complete ? completionLineFor(r) : "";
-  h += '<div class="next-step"><b>' + (checkEmail ? "Check your email" : complete ? "All done" : "What happens next") + "</b>"
+  const done = complete ? completionLineFor(r) : null;
+  h += '<div class="next-step"><b>' + (done ? done.head : complete ? "All done" : "What happens next") + "</b>"
     + (complete
-        ? (checkEmail
-            ? escapeHtml(checkEmail)
+        ? (done
+            ? escapeHtml(done.text)
             : r.isPayment
               ? "BRYC has paid this directly and it's reflected in your senior funds balance above."
               : "This request has been taken care of. Reach out to your counselor if you need anything else.")
@@ -3494,7 +3501,9 @@ function detailGridHtml(r){
 function messageFieldHtml(r){
   return '<div class="action-row">'
     + '<div class="action-field"><label>Message to student (they see this in their portal)</label>'
-    +   '<input type="text" class="fld-message wide" placeholder="e.g. Waiting on your ACT login" value="' + escapeHtml(r.messageToStudent) + '" /></div>'
+    +   '<input type="text" class="fld-message wide" placeholder="' + (requestTypeOf(r) === TYPE_PARTNER_WAIVER
+        ? "Optional: the partner school fee waiver code, if you're sharing it. Leave blank if their information was sent to the school."
+        : "e.g. Waiting on your ACT login") + '" value="' + escapeHtml(r.messageToStudent) + '" /></div>'
     + '<div class="action-field"><label>Internal notes (students never see this)</label>'
     +   '<input type="text" class="fld-notes" placeholder="e.g. 7/14/26 - JS" value="' + escapeHtml(r.notes) + '" /></div>'
     + '<button class="btn-save" data-sheetrow="' + r.sheetRow + '">Save</button>'
@@ -3736,10 +3745,10 @@ function reopenRequest(sheetRowStr){
     .then(function(){
       if(wasRemoved) computeRosterOnly();
       showToast(wasRemoved ? "Restored to the queue. Nobody was emailed."
-                           : "Reopened. " + first + " will get a short “back in the queue” email.");
+                           : "Reopened. Nobody was emailed.");
       renderFilterTabs();
       render();
-      return wasRemoved ? null : notifyStudent(r.sheetRow, "stage");
+      return null;
     })
     .catch(function(e){ showToast(e.message || "Couldn't reopen that."); });
 }
@@ -4015,7 +4024,8 @@ function saveRow(sheetRowStr, opts){
       let pending = null;
       if(becameFulfilled)                                pending = notifyStudent(sheetRow, "fulfilled");
       else if(messageChanged && String(message).trim())  pending = notifyStudent(sheetRow, "message");
-      else if(stageChanged)                              pending = notifyStudent(sheetRow, "stage");
+      // A plain stage change is not emailed: fellows saw every status change as noise.
+      // The portal shows where each request stands.
       if(pending){
         pending.then(function(res){
           // A null here means the send never got a reply -- expired sign-in,

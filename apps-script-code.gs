@@ -817,17 +817,27 @@ function handleNotifyStudent(e) {
  */
 /**
  * For requests that are fulfilled by BRYC sending the fellow something (a coach,
- * a login), the completed message points them to their inbox. '' for the
- * requests it doesn't apply to, which keep the standard "taken care of" wording.
+ * a login) or by passing their information on (a partner school waiver), the
+ * completed message says so and points them to their inbox. '' for the requests
+ * it doesn't apply to, which keep the standard "taken care of" wording.
+ * hasNote: the counselor wrote a note on the row (e.g. a partner fee waiver code),
+ * which the email shows below this line.
  */
-function completionLine_(type) {
+function completionLine_(row, map, hasNote) {
   const DASH = '\u2014';
-  const lines = {};
-  lines[TYPE_WRITING]     = 'You have been connected with your Writing Coach. Check your email ' + DASH + ' they will be reaching out to you.';
-  lines[TYPE_UWORLD]      = 'Your UWorld login information has been shared with you. Check your email.';
-  lines[TYPE_CAP]         = 'Your College Aid Pro access has been set up. Check your email for your login information.';
-  lines[TYPE_MASTERYPREP] = 'Your MasteryPrep login information has been shared with you. Check your email.';
-  return lines[String(type || '').trim()] || '';
+  const type = requestTypeOf_(row, map);
+  if (type === TYPE_WRITING)     return 'You have been connected with your Writing Coach. Check your email ' + DASH + ' they will be reaching out to you.';
+  if (type === TYPE_UWORLD)      return 'Your UWorld login information has been shared with you. Check your email.';
+  if (type === TYPE_CAP)         return 'Your College Aid Pro access has been set up. Check your email for your login information.';
+  if (type === TYPE_MASTERYPREP) return 'Your MasteryPrep login information has been shared with you. Check your email.';
+  if (type === TYPE_PARTNER_WAIVER) {
+    // Either BRYC passed their information to the school, or the counselor is
+    // handing them the school's fee waiver code directly (in the note).
+    if (hasNote) return 'Your partner school fee waiver information is below.';
+    const school = str_(row, map, 'partnerSchool');
+    return 'Your information has been shared with ' + (school || 'your partner school') + '. Check your email for next steps from the school.';
+  }
+  return '';
 }
 
 function composeNotification_(row, map, kind) {
@@ -845,16 +855,21 @@ function composeNotification_(row, map, kind) {
   const blocks = [{ p: 'Hi ' + first + ',' }];
 
   if (kind === 'fulfilled') {
-    const checkEmail = completionLine_(requestTypeOf_(row, map));
-    subject = 'Your BRYC ' + kindOf + ' is complete' + (checkEmail ? ': check your email' : '');
+    // A note typed while marking done must not be lost: completion is the one
+    // email that goes out, so it carries the note (e.g. a partner fee waiver code).
+    const note = String(cell_(row, map, '_MessagetoStudent') || '').trim();
+    const checkEmail = completionLine_(row, map, !!note);
+    const pointsToInbox = /check your email/i.test(checkEmail);
+    subject = 'Your BRYC ' + kindOf + ' is complete' + (pointsToInbox ? ': check your email' : '');
     if (checkEmail) {
       blocks.push({ p: 'Good news ' + DASH + ' your ' + kindOf + ' is complete.' });
-      blocks.push({ p: checkEmail + ' If you do not see it, check your spam folder.' });
+      blocks.push({ p: checkEmail + (pointsToInbox ? ' If you do not see it, check your spam folder.' : '') });
     } else {
       blocks.push({ p: isPay
         ? 'Good news ' + DASH + ' BRYC has paid the fee for your ' + kindOf + '. It has come out of your senior funds, and your updated balance is in your portal.'
         : 'Good news ' + DASH + ' your ' + kindOf + ' has been taken care of.' });
     }
+    if (note) { blocks.push({ h: 'A note from your counselor' }); blocks.push({ quote: note }); }
     blocks.push({ portal: true });
     blocks.push({ p: 'If something does not look right, please talk with your BRYC counselor or advisor.' });
 
@@ -913,22 +928,11 @@ function composeNotification_(row, map, kind) {
     blocks.push({ portal: true });
 
   } else if (kind === 'stage') {
-    // Progress update. "Complete" is deliberately NOT handled here -- that goes
-    // out as the richer 'fulfilled' email instead, so nobody gets both.
-    const stage = normalizeStage_(cell_(row, map, '_Stage'));
-    const lines = {
-      'Received':    'We have your ' + kindOf + ' and it is in the queue. Your counselor will review it shortly.',
-      'In progress': isPay
-                       ? 'Your ' + kindOf + ' is being worked on by your BRYC counselor. BRYC will arrange the payment ' + DASH + ' you do not need to pay anything yourself.'
-                       : 'Your ' + kindOf + ' is being worked on by your BRYC counselor now.'
-    };
-    if (!lines[stage]) {
-      return { error: 'No update email is sent for the stage "' + stage + '".' };
-    }
-    subject = 'Update on your BRYC ' + kindOf + ': ' + stage;
-    blocks.push({ p: lines[stage] });
-    blocks.push({ portal: true });
-    blocks.push({ p: 'No action is needed from you unless your counselor asks.' });
+    // Progress updates ("In progress", "Received") are deliberately NOT emailed any
+    // more -- fellows were getting an email for every status change. The portal still
+    // shows where each request stands. Kept as an explicit refusal so a dashboard
+    // page left open from before this change can't send one.
+    return { error: 'Progress updates are not emailed. The student sees them in their portal.' };
 
   } else {
     return { error: 'Unknown notification type.' };
@@ -1091,7 +1095,7 @@ function kindForChange_(prev, next) {
     return (pState !== STAGE_NACAC || nMsg !== pMsg) ? 'nacac' : null;
   }
   if (nMsg && nMsg !== pMsg) return 'message';
-  if (nState !== pState && nState !== 'FULFILLED') return 'stage';
+  // A plain stage change (Received / In progress) sends nothing.
   return null;
 }
 
