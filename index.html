@@ -1885,11 +1885,16 @@ const STAGE_NACAC = "NACAC fee waiver";
 // (still editable); anything else is written by hand.
 const DECLINE_REASONS = [
   { key: "attendance", label: "Attendance",
-    text: "Senior funds require at least " + ATTENDANCE_MIN_PERCENT_TEXT + "% attendance, and your attendance is currently below that requirement." },
+    // Quotes the fellow's actual attendance from the roster when we have it.
+    text: function(r){
+      const pct = attendancePctFor(r && r.name);
+      return "Senior funds require at least " + ATTENDANCE_MIN_PERCENT_TEXT + "% attendance, and your attendance is currently "
+        + (pct === null ? "below that requirement." : pct + "%.");
+    } },
   { key: "income", label: "Income verification",
-    text: "We were not able to complete the income verification needed to use senior funds." },
+    text: function(){ return "You have not completed the income verification required to use senior funds."; } },
   { key: "ineligible", label: "Doesn't qualify for senior funds",
-    text: "This request is not an eligible use of senior funds." }
+    text: function(){ return "This request is not an eligible use of senior funds."; } }
 ];
 const ALL_STAGES = STAGES.concat([STAGE_UNABLE, STAGE_NACAC, STAGE_REMOVED]);
 const STALE_DAYS = 7;
@@ -3619,7 +3624,8 @@ function wireStatusButtons(container){
       const box = panel && panel.querySelector(".fld-decline-reason");
       const d = DECLINE_REASONS.find(function(x){ return x.key === chip.getAttribute("data-reason"); });
       if(!box || !d) return;
-      box.value = d.text;
+      const req = findRequest(panel.closest("[data-idx]").getAttribute("data-idx"));
+      box.value = d.text(req);
       box.setAttribute("data-reason", d.key);
       panel.querySelectorAll(".dp-chip").forEach(function(c){ c.classList.toggle("active", c === chip); });
       box.focus();
