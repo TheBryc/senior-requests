@@ -307,6 +307,14 @@
     padding:12px 14px;margin-top:12px;font-size:13.5px;color:var(--ink);line-height:1.6;
   }
   .next-step b{color:var(--dark-teal);display:block;margin-bottom:3px;font-size:12.5px;}
+  .next-step ol{margin:6px 0 0 18px;padding:0;}
+  .next-step li{margin-bottom:7px;}
+  .next-step a{color:var(--mid-teal);font-weight:600;word-break:break-word;}
+  .email-template{margin-top:8px;padding:11px 13px;background:#fff;border:1px solid var(--border);border-radius:8px;
+    font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word;color:var(--ink);}
+  .email-template .hd{color:var(--muted);}
+  .btn-copy{margin-top:9px;background:var(--mid-teal);color:#fff;border:none;border-radius:8px;padding:8px 14px;
+    font-size:13px;font-weight:700;cursor:pointer;}
 
   /* ---------- funds explainer ---------- */
   .explainer-toggle{
@@ -1407,6 +1415,19 @@ function detailValue(r, label){
   return "";
 }
 
+/* "Copy email" buttons (NACAC template). One delegated listener for the whole page. */
+document.addEventListener("click", function(e){
+  const b = e.target && e.target.closest ? e.target.closest(".btn-copy") : null;
+  if(!b) return;
+  const text = b.getAttribute("data-copy") || "";
+  const done = function(){ const was = b.textContent; b.textContent = "Copied!"; setTimeout(function(){ b.textContent = was; }, 1800); };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(function(){ window.prompt("Copy this email:", text); });
+  } else {
+    window.prompt("Copy this email:", text);
+  }
+});
+
 function nextStepFor(r){
   const t = String(r.type || "");
   if(t.indexOf("senior funds") > -1){
@@ -1484,10 +1505,31 @@ function requestBodyHtml(r){
   // BRYC isn't paying this fee: the fellow completes a NACAC fee waiver instead.
   // A next step, not a refusal, so it must not read like the "unable" box below.
   if(r.stage === NACAC_STAGE && !r.fulfilled){
+    const p = r.nacac || null;
+    const who = p ? p.counselorName : "Your BRYC counselor";
     let n = '<div class="next-step"><b>Complete a NACAC fee waiver</b>'
-      + "Your BRYC counselor would like you to complete a NACAC fee waiver for this application instead of paying the fee from your senior funds.</div>";
+      + escapeHtml(who) + " would like you to complete a NACAC fee waiver"
+      + (p && p.college ? " for " + escapeHtml(p.college) : "") + " instead of paying the fee from your senior funds. "
+      + "Ms. Jakia has already filled in her part and signed it, so you only have a few steps.</div>";
     if(r.message){
       n += '<div class="next-step"><b>A note from your counselor</b>' + escapeHtml(r.message) + "</div>";
+    }
+    if(p){
+      const college = p.college ? escapeHtml(p.college) : "your college";
+      n += '<div class="next-step"><b>What to do</b><ol>'
+        + '<li><a href="' + escapeHtml(p.waiverUrl) + '" target="_blank" rel="noopener">Open the waiver form</a> and download it.</li>'
+        + "<li>Fill in your part and sign it. Write " + college + ' on the &ldquo;To: Dean/Director of Admission at&rdquo; line, '
+        +   "then add your name, address, city, state and ZIP, and sign the student certification statement. "
+        +   "You can type into the PDF, or print it, sign it and take a clear scan or photo. Don&rsquo;t change anything else on the form.</li>"
+        + "<li>Email the completed form to the admissions office at " + college + " as an attachment, directly. "
+        +   "Check the college&rsquo;s admissions website for the right email address. Don&rsquo;t send it to BRYC to forward.</li>"
+        + "<li>CC " + escapeHtml(p.cc.join(" and ")) + " on that email so we can follow up with the school.</li>"
+        + "</ol></div>";
+      const tpl = "To: [the admissions office email address]\nCC: " + p.cc.join(", ") + "\nSubject: " + p.templateSubject + "\n\n" + p.templateBody;
+      n += '<div class="next-step"><b>Email to copy and paste</b>'
+        + "Attach the completed form, and fill in the details in [brackets]."
+        + '<div class="email-template">' + escapeHtml(tpl) + "</div>"
+        + '<button type="button" class="btn-copy" data-copy="' + escapeHtml(tpl) + '">Copy email</button></div>';
     }
     if(r.isPayment){
       n += '<div class="next-step"><b>Your senior funds</b>Nothing was taken out of your senior funds for this request.</div>';
@@ -3348,7 +3390,8 @@ function declinePanelHtml(r){
   const nacac = r.feeType === "College application fee"
     ? '<div class="decline-panel nacac-panel">'
     +   '<div class="dp-title">Having ' + escapeHtml(first) + ' complete a NACAC fee waiver instead?</div>'
-    +   '<div class="dp-help">' + escapeHtml(first) + ' is emailed to complete a NACAC fee waiver rather than BRYC paying the fee. '
+    +   '<div class="dp-help">' + escapeHtml(first) + ' is emailed your pre-signed NACAC waiver, the steps to complete it, and an email '
+    +   'template to send to the college\'s admissions office (copying you and their counselor). '
     +   'Nothing is paid or taken out of their senior funds, and the request closes.</div>'
     +   '<textarea class="fld-nacac-note" rows="2" placeholder="Optional note, e.g. a link or steps for completing the waiver."></textarea>'
     +   '<div class="dp-actions"><button class="btn-nacac btn-decline" style="background:var(--mid-teal);" data-sheetrow="' + r.sheetRow + '">'

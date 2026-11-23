@@ -509,6 +509,9 @@ function buildPortalData_(email) {
         isPayment: isPaymentRequest_(row, map),
         details: details
       });
+      // The NACAC steps and email template, so the student can see them in the
+      // portal as well as in the email.
+      if (stage === STAGE_NACAC && !fulfilled) requests[requests.length - 1].nacac = nacacPlan_(row, map);
     }
   }
 
@@ -748,16 +751,32 @@ function composeNotification_(row, map, kind) {
 
   } else if (kind === 'nacac') {
     const note = String(cell_(row, map, '_MessagetoStudent') || '').trim();
-    const college = str_(row, map, 'college');
+    const plan = nacacPlan_(row, map);
+    const where = plan.college ? 'the admissions office at ' + plan.college : 'the college\'s admissions office';
     subject = 'An update on your BRYC ' + kindOf + ': please complete a NACAC fee waiver';
     body = 'Hi ' + first + ',\n\n'
       + 'Thank you for submitting your ' + kindOf + '. Instead of paying the application fee from your senior funds, '
-      + 'your BRYC counselor would like you to complete a NACAC fee waiver'
-      + (college ? ' for ' + college : '') + '.\n\n'
+      + plan.counselorName + ' would like you to complete a NACAC fee waiver'
+      + (plan.college ? ' for ' + plan.college : '') + '. '
+      + 'Ms. Jakia has already filled in her part and signed it, so you only have a few steps.\n\n'
       + (note ? 'A note from your counselor:\n\n    ' + note + '\n\n' : '')
+      + 'WHAT TO DO\n\n'
+      + '1. Open the waiver form and download it:\n   ' + plan.waiverUrl + '\n\n'
+      + '2. Fill in your part and sign it. Write ' + (plan.college || 'the name of your college') + ' on the "To: Dean/Director of Admission at" line, '
+      + 'then add your name, address, city, state and ZIP, and sign the student certification statement. '
+      + 'You can type into the PDF, or print it, sign it and take a clear scan or photo. Please do not change anything else on the form.\n\n'
+      + '3. Email the completed form to ' + where + ' as an attachment. Look on the college\'s admissions website for the right email address. '
+      + 'Send it directly to the college yourself. Do not send it to BRYC to forward.\n\n'
+      + '4. CC ' + plan.cc.join(' and ') + ' on that email so we can follow up with the school.\n\n'
+      + 'EMAIL TO COPY AND PASTE\n\n'
+      + 'To: [the admissions office email address]\n'
+      + 'CC: ' + plan.cc.join(', ') + '\n'
+      + 'Subject: ' + plan.templateSubject + '\n\n'
+      + plan.templateBody + '\n\n'
+      + '(Remember to attach the completed form, and fill in the details in [brackets].)\n\n'
       + 'Nothing has been taken out of your senior funds for this request.\n'
       + portalLinkLine_()
-      + '\nIf you have any questions about the waiver, talk with your BRYC counselor or advisor. '
+      + '\nIf you have any questions, talk with your BRYC counselor or advisor. '
       + 'You are always welcome to submit a new request.\n\nThe BRYC Team';
 
   } else if (kind === 'message') {
@@ -808,6 +827,59 @@ function counselorEmail_(row, map) {
   const m = str_(row, map, 'counselor').match(/^(?:Ms\.|Mr\.|Mrs\.|Dr\.)?\s*([A-Za-z]+)/);
   const first = m ? m[1].toLowerCase() : '';
   return CC_STAFF.indexOf(first) > -1 ? first + '@' + ADMIN_EMAIL_DOMAIN : '';
+}
+
+/**
+ * The NACAC fee waiver BRYC hands out. Ms. Jakia's information and signature are
+ * already on it; the fellow adds the college, their own details and signature,
+ * then emails it straight to that college's admissions office.
+ * Drive file "NACAC Fee Waiver_PY26_Blank.pdf" (link-viewable so fellows without
+ * a BRYC account can open it). Point this at the new file when the form is renewed.
+ */
+const NACAC_WAIVER_URL = 'https://drive.google.com/file/d/1HiP1FEri5VA5oct78q6nUelE5wpCQIfA/view?usp=sharing';
+
+/** "Ms. Rachel (counselor)" -> "Ms. Rachel", for copy a student reads. */
+function counselorName_(row, map) {
+  const label = str_(row, map, 'counselor').replace(/\s*\(.*\)\s*$/, '').trim();
+  return label || 'your BRYC counselor';
+}
+
+/**
+ * Everything a fellow needs to send their NACAC waiver: the college, who to
+ * copy, and the email to the admissions office, already filled in with what we
+ * know. Shared by the email and the student portal so the two never differ.
+ */
+function nacacPlan_(row, map) {
+  const college = str_(row, map, 'college');
+  const fullName = str_(row, map, 'name');
+  const counselor = counselorName_(row, map);
+  const jakia = 'jakia@' + ADMIN_EMAIL_DOMAIN;
+  const counselorEmail = counselorEmail_(row, map);
+  const cc = [jakia];
+  if (counselorEmail && counselorEmail !== jakia) cc.push(counselorEmail);
+  const jakiaIsCounselor = !counselorEmail || counselorEmail === jakia;
+
+  const subject = 'Application Fee Waiver Request - ' + (fullName || '[Your full name]');
+  const body = 'Dear Dean/Director of Admission,\n\n'
+    + 'My name is ' + (fullName || '[Your full name]') + ', and I am a senior applying to ' + (college || '[College name]') + '. '
+    + 'I am a Fellow with the Baton Rouge Youth Coalition (BRYC) and I am requesting an application fee waiver.\n\n'
+    + 'I have attached the NACAC Request for Admission Application Fee Waiver form. It has been completed and signed by '
+    + 'Ms. Jakia, the Director of Senior Counseling at BRYC, and by me.\n\n'
+    + 'Please let me know if you need anything else to process the waiver. '
+    + (jakiaIsCounselor
+        ? 'I have copied Ms. Jakia, who is happy to answer any questions.'
+        : 'I have copied Ms. Jakia and my BRYC counselor, ' + counselor + ', who are happy to answer any questions.')
+    + '\n\nThank you for your time,\n'
+    + (fullName || '[Your full name]') + '\n[Your phone number]\n[Your personal email]';
+
+  return {
+    waiverUrl: NACAC_WAIVER_URL,
+    college: college,
+    counselorName: counselor,
+    cc: cc,
+    templateSubject: subject,
+    templateBody: body
+  };
 }
 
 /** The CC address for a message, unless it would just duplicate the recipient. */
