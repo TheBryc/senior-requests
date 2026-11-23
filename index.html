@@ -580,6 +580,9 @@
 #staff .btn-decline{background:var(--warn-ink);color:#fff;border:none;border-radius:8px;padding:9px 14px;
     font-size:13px;font-weight:700;}
 #staff .btn-decline:disabled{opacity:.5;}
+#staff .nacac-panel{border-left-color:var(--mid-teal);}
+#staff .fld-nacac-note{width:100%;border:1px solid var(--border);border-radius:6px;padding:8px 10px;
+    font-size:13px;font-family:inherit;resize:vertical;}
 #staff .btn-remove{background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;
     padding:8px 12px;font-size:12.5px;font-weight:600;}
 #staff .btn-reopen{background:#fff;border:1px solid var(--mid-teal);color:var(--mid-teal);border-radius:8px;
@@ -1373,6 +1376,8 @@ function attendancePanelHtml(d){
 const CANONICAL_STAGES = ["Received", "In progress", "Complete"];
 // A request BRYC could not complete. The reason a counselor wrote arrives in r.message.
 const DECLINED_STAGE = "Unable to fulfill";
+// The counselor has the fellow complete a NACAC fee waiver instead of BRYC paying the fee.
+const NACAC_STAGE = "NACAC fee waiver";
 
 function trailHtml(r){
   // The final step reads "Paid" for the requests BRYC actually pays money for,
@@ -1457,12 +1462,13 @@ function requestsPanelHtml(d){
     const open = openReq === i;
     const complete = r.stage === "Complete" || r.fulfilled;
     const declined = r.stage === DECLINED_STAGE && !r.fulfilled;
+    const nacac = r.stage === NACAC_STAGE && !r.fulfilled;
     return '<div class="req-card' + (open ? " open" : "") + '">'
       + '<div class="req-head" data-req="' + i + '">'
       +   '<div class="txt"><div class="req-type">' + escapeHtml(titleCase(r.friendlyType || r.type)) + "</div>"
       +   '<div class="req-date">Received ' + escapeHtml(r.submittedLong || r.submitted || "recently") + "</div></div>"
       +   '<span class="pill ' + (complete ? "pill-ok" : declined ? "pill-declined" : "pill-pending") + '">'
-      +     escapeHtml(complete ? (r.isPayment ? "Paid" : "Fulfilled") : r.stage) + "</span>"
+      +     escapeHtml(complete ? (r.isPayment ? "Paid" : "Fulfilled") : nacac ? "Next step: NACAC waiver" : r.stage) + "</span>"
       +   '<span class="chev">&#9660;</span>'
       + "</div>"
       + (open ? '<div class="req-body">' + requestBodyHtml(r) + "</div>" : "")
@@ -1474,6 +1480,21 @@ function requestsPanelHtml(d){
 
 function requestBodyHtml(r){
   const complete = r.stage === "Complete" || r.fulfilled;
+
+  // BRYC isn't paying this fee: the fellow completes a NACAC fee waiver instead.
+  // A next step, not a refusal, so it must not read like the "unable" box below.
+  if(r.stage === NACAC_STAGE && !r.fulfilled){
+    let n = '<div class="next-step"><b>Complete a NACAC fee waiver</b>'
+      + "Your BRYC counselor would like you to complete a NACAC fee waiver for this application instead of paying the fee from your senior funds.</div>";
+    if(r.message){
+      n += '<div class="next-step"><b>A note from your counselor</b>' + escapeHtml(r.message) + "</div>";
+    }
+    if(r.isPayment){
+      n += '<div class="next-step"><b>Your senior funds</b>Nothing was taken out of your senior funds for this request.</div>';
+    }
+    n += '<div class="next-step"><b>Questions?</b>Talk with your BRYC counselor or advisor. You can also submit a new request anytime.</div>';
+    return n + detailsHtml(r);
+  }
 
   // Not completed, and never going to be as submitted: say so plainly, with the
   // counselor's reason, instead of drawing a progress trail that implies waiting.
@@ -1772,7 +1793,11 @@ function normalizeStage(s){
 // dropdown -- they're set by the "Can't fulfill" and "Remove" actions only.
 const STAGE_UNABLE = "Unable to fulfill";
 const STAGE_REMOVED = "Removed";
-const ALL_STAGES = STAGES.concat([STAGE_UNABLE, STAGE_REMOVED]);
+// Closed out like "Unable to fulfill" (nothing is paid), but the fellow is told to
+// complete a NACAC fee waiver instead. Set only by the NACAC button on a college
+// application fee request.
+const STAGE_NACAC = "NACAC fee waiver";
+const ALL_STAGES = STAGES.concat([STAGE_UNABLE, STAGE_NACAC, STAGE_REMOVED]);
 const STALE_DAYS = 7;
 
 // The weekly attendance workbook, used here as the Fellow ROSTER: anyone on it
@@ -2534,7 +2559,9 @@ function rowToResponse(row, sheetRow){
  * (not fulfilled), so they must not count as outstanding, and removed ones
  * disappear from every count and list unless "Show removed" is ticked. */
 function isRemoved(r){ return r.stage === STAGE_REMOVED; }
-function isDeclined(r){ return r.stage === STAGE_UNABLE && !r.fulfilled; }
+function isNacac(r){ return r.stage === STAGE_NACAC && !r.fulfilled; }
+/** Closed without BRYC paying: either unable to fulfill, or sent to a NACAC fee waiver. */
+function isDeclined(r){ return (r.stage === STAGE_UNABLE || r.stage === STAGE_NACAC) && !r.fulfilled; }
 function isOpenReq(r){ return !r.fulfilled && !isDeclined(r) && !isRemoved(r); }
 function liveResponses(){ return responses.filter(function(r){ return !isRemoved(r); }); }
 
@@ -3316,7 +3343,18 @@ function messageFieldHtml(r){
 function declinePanelHtml(r){
   if(r.fulfilled || isDeclined(r) || isRemoved(r)) return "";
   const first = String(r.name || "").trim().split(/\s+/)[0] || "the fellow";
-  return '<div class="decline-panel">'
+  // A college application fee can be handled by a NACAC fee waiver instead of
+  // paying it. Offered only there, so it never clutters other request types.
+  const nacac = r.feeType === "College application fee"
+    ? '<div class="decline-panel nacac-panel">'
+    +   '<div class="dp-title">Having ' + escapeHtml(first) + ' complete a NACAC fee waiver instead?</div>'
+    +   '<div class="dp-help">' + escapeHtml(first) + ' is emailed to complete a NACAC fee waiver rather than BRYC paying the fee. '
+    +   'Nothing is paid or taken out of their senior funds, and the request closes.</div>'
+    +   '<textarea class="fld-nacac-note" rows="2" placeholder="Optional note, e.g. a link or steps for completing the waiver."></textarea>'
+    +   '<div class="dp-actions"><button class="btn-nacac btn-decline" style="background:var(--mid-teal);" data-sheetrow="' + r.sheetRow + '">'
+    +   'Email ' + escapeHtml(first) + ' &amp; mark NACAC fee waiver</button></div></div>'
+    : "";
+  return nacac + '<div class="decline-panel">'
     + '<div class="dp-title">Can\'t fulfill this request?</div>'
     + '<div class="dp-help">Tell ' + escapeHtml(first) + ' why. They\'ll get this reason by email and see it in their portal. '
     +   'Nothing is paid or taken out of their senior funds.</div>'
@@ -3336,7 +3374,7 @@ function closedRowHtml(r){
     + '<div class="qmain">'
     +   '<div class="qname">' + escapeHtml(r.name || "(no name)") + "</div>"
     +   '<div class="qmeta">' + escapeHtml(requestTypeOf(r) || "(no type)") + " &middot; " + escapeHtml(r.counselor || "no counselor")
-    +     (!removed && r.messageToStudent ? " &middot; Reason: <i>" + escapeHtml(r.messageToStudent) + "</i>" : "")
+    +     (!removed && r.messageToStudent ? " &middot; " + (isNacac(r) ? "Note" : "Reason") + ": <i>" + escapeHtml(r.messageToStudent) + "</i>" : "")
     +   "</div>"
     + "</div>"
     + '<span class="qage old">' + escapeHtml(r.stage) + "</span>"
@@ -3361,7 +3399,7 @@ function closedCardHtml(r){
     + '<div class="req-card-body">' + detailGridHtml(r)
     +   '<div class="action-row">'
     +     (!removed && r.messageToStudent
-          ? '<div class="action-field"><label>Reason the fellow was given</label><div class="reason-text">' + escapeHtml(r.messageToStudent) + "</div></div>"
+          ? '<div class="action-field"><label>' + (isNacac(r) ? "Note the fellow was given" : "Reason the fellow was given") + '</label><div class="reason-text">' + escapeHtml(r.messageToStudent) + "</div></div>"
           : "")
     +     '<button class="btn-reopen" data-sheetrow="' + r.sheetRow + '">' + (removed ? "Restore request" : "Reopen request") + "</button>"
     +   "</div>"
@@ -3377,6 +3415,9 @@ function wireStatusButtons(container){
   });
   container.querySelectorAll(".btn-decline").forEach(function(b){
     b.addEventListener("click", function(e){ e.stopPropagation(); declineRequest(b.getAttribute("data-sheetrow")); });
+  });
+  container.querySelectorAll(".btn-nacac").forEach(function(b){
+    b.addEventListener("click", function(e){ e.stopPropagation(); nacacRequest(b.getAttribute("data-sheetrow")); });
   });
   container.querySelectorAll(".btn-remove").forEach(function(b){
     b.addEventListener("click", function(e){ e.stopPropagation(); removeRequest(b.getAttribute("data-sheetrow")); });
@@ -3448,6 +3489,42 @@ function declineRequest(sheetRowStr){
     })
     .then(function(res){
       if(res && res.status === "ok")             showToast(first + " was emailed the reason.");
+      else if(res && res.status === "forbidden") showToast("Saved. " + (res.message || "Your sign-in has expired.") + " BRYC will send the email within 5 minutes.");
+      else if(res && res.status)                 showToast("Saved. " + (res.message || "Email not sent yet") + " — BRYC will retry within 5 minutes.");
+      else                                       showToast("Saved. " + first + " will be emailed within 5 minutes.");
+    })
+    .catch(function(e){
+      if(btn){ btn.disabled = false; btn.innerHTML = label; }
+      showToast(e.message || "Couldn't save that.");
+    });
+}
+
+/** The fellow asked for the application fee to be paid; they complete a NACAC fee waiver instead. */
+function nacacRequest(sheetRowStr){
+  const r = findRequest(sheetRowStr);
+  if(!r) return;
+  if(r.fulfilled){ showToast("That request is already fulfilled, so it can't be sent to a NACAC fee waiver."); return; }
+  const scope = document.querySelector('[data-idx="' + r.sheetRow + '"]');
+  if(!scope) return;
+  const box = scope.querySelector(".fld-nacac-note");
+  const btn = scope.querySelector(".btn-nacac");
+  const note = box ? box.value.trim() : "";
+  const first = String(r.name || "").trim().split(/\s+/)[0] || "the fellow";
+  if(!window.confirm("Email " + first + " to complete a NACAC fee waiver instead of BRYC paying the fee?\n\n"
+      + (note ? "Your note:\n\n“" + note + "”\n\n" : "") + "Nothing will be taken out of their senior funds and this request will close.")) return;
+
+  const label = btn ? btn.innerHTML : "";
+  if(btn){ btn.disabled = true; btn.textContent = "Saving…"; }
+
+  setStatus(r, { stage: STAGE_NACAC, message: note, fulfilled: false, notes: appendNote(r.notes, "NACAC fee waiver") })
+    .then(function(){
+      showToast("Saved. Emailing " + first + "…");
+      renderFilterTabs();
+      render();
+      return notifyStudent(r.sheetRow, "nacac", true);
+    })
+    .then(function(res){
+      if(res && res.status === "ok")             showToast(first + " was emailed to complete a NACAC fee waiver.");
       else if(res && res.status === "forbidden") showToast("Saved. " + (res.message || "Your sign-in has expired.") + " BRYC will send the email within 5 minutes.");
       else if(res && res.status)                 showToast("Saved. " + (res.message || "Email not sent yet") + " — BRYC will retry within 5 minutes.");
       else                                       showToast("Saved. " + first + " will be emailed within 5 minutes.");

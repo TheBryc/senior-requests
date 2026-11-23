@@ -87,7 +87,11 @@ const DEFAULT_STARTING_FUNDS = 150;
 // everywhere (queue, student portal) and never emails anybody.
 const STAGE_DECLINED = 'Unable to fulfill';
 const STAGE_REMOVED = 'Removed';
-const PORTAL_STAGES = ['Received', 'In progress', 'Complete', STAGE_DECLINED, STAGE_REMOVED];
+// The fellow asked for the application fee to be paid, but the counselor has
+// them complete a NACAC fee waiver instead. Closed out like "Unable to fulfill"
+// (nothing is paid), but worded as a next step rather than a refusal.
+const STAGE_NACAC = 'NACAC fee waiver';
+const PORTAL_STAGES = ['Received', 'In progress', 'Complete', STAGE_DECLINED, STAGE_NACAC, STAGE_REMOVED];
 
 // "In review" and "Approved" used to be separate steps. Rows saved before they
 // were merged still carry the old words, so they are read as "In progress".
@@ -742,6 +746,20 @@ function composeNotification_(row, map, kind) {
       + '\nIf you still need this, please talk with your BRYC counselor or advisor about next steps. '
       + 'You are always welcome to submit a new request.\n\nThe BRYC Team';
 
+  } else if (kind === 'nacac') {
+    const note = String(cell_(row, map, '_MessagetoStudent') || '').trim();
+    const college = str_(row, map, 'college');
+    subject = 'An update on your BRYC ' + kindOf + ': please complete a NACAC fee waiver';
+    body = 'Hi ' + first + ',\n\n'
+      + 'Thank you for submitting your ' + kindOf + '. Instead of paying the application fee from your senior funds, '
+      + 'your BRYC counselor would like you to complete a NACAC fee waiver'
+      + (college ? ' for ' + college : '') + '.\n\n'
+      + (note ? 'A note from your counselor:\n\n    ' + note + '\n\n' : '')
+      + 'Nothing has been taken out of your senior funds for this request.\n'
+      + portalLinkLine_()
+      + '\nIf you have any questions about the waiver, talk with your BRYC counselor or advisor. '
+      + 'You are always welcome to submit a new request.\n\nThe BRYC Team';
+
   } else if (kind === 'message') {
     const message = String(cell_(row, map, '_MessagetoStudent') || '').trim();
     if (!message) return { error: 'There is no message on that row to send.' };
@@ -860,6 +878,11 @@ function kindForChange_(prev, next) {
     // Adding or changing it later sends the email then.
     if (!nMsg) return null;
     return (pState !== STAGE_DECLINED || nMsg !== pMsg) ? 'declined' : null;
+  }
+  if (nState === STAGE_NACAC) {
+    // Unlike "Unable to fulfill", the note is optional -- the instruction to
+    // complete a NACAC waiver is the email. A changed note re-sends it.
+    return (pState !== STAGE_NACAC || nMsg !== pMsg) ? 'nacac' : null;
   }
   if (nMsg && nMsg !== pMsg) return 'message';
   if (nState !== pState && nState !== 'FULFILLED') return 'stage';
@@ -991,6 +1014,7 @@ function commsSheet_() {
 const COMMS_LABELS = {
   fulfilled: 'Request complete',
   declined:  'Unable to fulfill',
+  nacac:     'NACAC fee waiver',
   message:   'Counselor note',
   stage:     'Stage update',
   received:  'Request received'
