@@ -593,12 +593,18 @@
     border-radius:8px;padding:12px 14px;background:#fff;}
 #staff .decline-panel .dp-title{font-weight:700;font-size:13px;color:var(--ink);}
 #staff .decline-panel .dp-help{font-size:12px;color:var(--muted);margin:3px 0 8px;line-height:1.45;}
+#staff .dp-reasons{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 8px;}
+#staff .dp-chip{background:#fff;border:1px solid var(--border);color:var(--ink);border-radius:20px;padding:5px 12px;font-size:12.5px;font-weight:600;cursor:pointer;}
+#staff .dp-chip:hover{border-color:var(--mid-teal);}
+#staff .dp-chip.active{background:var(--mid-teal);border-color:var(--mid-teal);color:#fff;}
 #staff .fld-decline-reason{width:100%;border:1px solid var(--border);border-radius:6px;padding:8px 10px;
     font-size:13px;font-family:inherit;resize:vertical;}
 #staff .decline-panel .dp-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px;}
 #staff .btn-decline{background:var(--warn-ink);color:#fff;border:none;border-radius:8px;padding:9px 14px;
     font-size:13px;font-weight:700;}
 #staff .btn-decline:disabled{opacity:.5;}
+#staff .btn-nacac{background:var(--mid-teal);color:#fff;border:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:700;}
+#staff .btn-nacac:disabled{opacity:.5;}
 #staff .nacac-panel{border-left-color:var(--mid-teal);}
 #staff .fld-nacac-note{width:100%;border:1px solid var(--border);border-radius:6px;padding:8px 10px;
     font-size:13px;font-family:inherit;resize:vertical;}
@@ -1875,6 +1881,16 @@ const STAGE_REMOVED = "Removed";
 // complete a NACAC fee waiver instead. Set only by the NACAC button on a college
 // application fee request.
 const STAGE_NACAC = "NACAC fee waiver";
+// The usual reasons a request can't be fulfilled. Picking one fills the reason box
+// (still editable); anything else is written by hand.
+const DECLINE_REASONS = [
+  { key: "attendance", label: "Attendance",
+    text: "Senior funds require at least " + ATTENDANCE_MIN_PERCENT_TEXT + "% attendance, and your attendance is currently below that requirement." },
+  { key: "income", label: "Income verification",
+    text: "We were not able to complete the income verification needed to use senior funds." },
+  { key: "ineligible", label: "Doesn't qualify for senior funds",
+    text: "This request is not an eligible use of senior funds." }
+];
 const ALL_STAGES = STAGES.concat([STAGE_UNABLE, STAGE_NACAC, STAGE_REMOVED]);
 const STALE_DAYS = 7;
 
@@ -3531,14 +3547,17 @@ function declinePanelHtml(r){
     +   'template to send to the college\'s admissions office (copying you and their counselor). '
     +   'Nothing is paid or taken out of their senior funds, and the request closes.</div>'
     +   '<textarea class="fld-nacac-note" rows="2" placeholder="Optional note, e.g. a link or steps for completing the waiver."></textarea>'
-    +   '<div class="dp-actions"><button class="btn-nacac btn-decline" style="background:var(--mid-teal);" data-sheetrow="' + r.sheetRow + '">'
+    +   '<div class="dp-actions"><button class="btn-nacac" data-sheetrow="' + r.sheetRow + '">'
     +   'Email ' + escapeHtml(first) + ' &amp; mark NACAC fee waiver</button></div></div>'
     : "";
   return nacac + '<div class="decline-panel">'
     + '<div class="dp-title">Can\'t fulfill this request?</div>'
     + '<div class="dp-help">Tell ' + escapeHtml(first) + ' why. They\'ll get this reason by email and see it in their portal. '
     +   'Nothing is paid or taken out of their senior funds.</div>'
-    + '<textarea class="fld-decline-reason" rows="2" placeholder="e.g. This college already waived the application fee, so there\'s nothing to pay."></textarea>'
+    + '<div class="dp-reasons">' + DECLINE_REASONS.map(function(d){
+        return '<button type="button" class="dp-chip" data-reason="' + d.key + '">' + escapeHtml(d.label) + "</button>";
+      }).join("") + "</div>"
+    + '<textarea class="fld-decline-reason" rows="2" placeholder="Pick a reason above, or write your own."></textarea>'
     + '<div class="dp-error"></div>'
     + '<div class="dp-actions">'
     +   '<button class="btn-decline" data-sheetrow="' + r.sheetRow + '">Email ' + escapeHtml(first) + ' &amp; mark unable to fulfill</button>'
@@ -3592,6 +3611,19 @@ function wireStatusButtons(container){
   });
   container.querySelectorAll(".btn-hold-roster").forEach(function(b){
     b.addEventListener("click", function(e){ e.stopPropagation(); toggleRosterHold(b.getAttribute("data-key")); });
+  });
+  container.querySelectorAll(".dp-chip").forEach(function(chip){
+    chip.addEventListener("click", function(e){
+      e.stopPropagation();
+      const panel = chip.closest(".decline-panel");
+      const box = panel && panel.querySelector(".fld-decline-reason");
+      const d = DECLINE_REASONS.find(function(x){ return x.key === chip.getAttribute("data-reason"); });
+      if(!box || !d) return;
+      box.value = d.text;
+      box.setAttribute("data-reason", d.key);
+      panel.querySelectorAll(".dp-chip").forEach(function(c){ c.classList.toggle("active", c === chip); });
+      box.focus();
+    });
   });
   container.querySelectorAll(".btn-decline").forEach(function(b){
     b.addEventListener("click", function(e){ e.stopPropagation(); declineRequest(b.getAttribute("data-sheetrow")); });
@@ -3658,7 +3690,9 @@ function declineRequest(sheetRowStr){
   const label = btn ? btn.innerHTML : "";
   if(btn){ btn.disabled = true; btn.textContent = "Saving…"; }
 
-  setStatus(r, { stage: STAGE_UNABLE, message: reason, fulfilled: false, notes: appendNote(r.notes, "Unable to fulfill") })
+  const cat = DECLINE_REASONS.find(function(x){ return x.key === (box && box.getAttribute("data-reason")); });
+  setStatus(r, { stage: STAGE_UNABLE, message: reason, fulfilled: false,
+                 notes: appendNote(r.notes, "Unable to fulfill" + (cat ? " \u2014 " + cat.label.toLowerCase() : "")) })
     .then(function(){
       showToast("Saved. Emailing " + first + "…");
       renderFilterTabs();
