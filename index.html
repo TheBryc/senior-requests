@@ -1370,15 +1370,17 @@ function attendancePanelHtml(d){
 
 /* ---------------------- request progress + guidance ---------------------- */
 
-const CANONICAL_STAGES = ["Received", "In review", "Approved", "Complete"];
+const CANONICAL_STAGES = ["Received", "In progress", "Complete"];
 // A request BRYC could not complete. The reason a counselor wrote arrives in r.message.
 const DECLINED_STAGE = "Unable to fulfill";
 
 function trailHtml(r){
   // The final step reads "Paid" for the requests BRYC actually pays money for,
   // and "Complete" for everything else.
-  const labels = ["Received", "In review", "Approved", r.isPayment ? "Paid" : "Complete"];
-  const at = Math.max(0, CANONICAL_STAGES.indexOf(r.stage));
+  const labels = ["Received", "In progress", r.isPayment ? "Paid" : "Complete"];
+  // Older saved rows may still say "In review" / "Approved"; both are now "In progress".
+  const stageNow = (r.stage === "In review" || r.stage === "Approved") ? "In progress" : r.stage;
+  const at = Math.max(0, CANONICAL_STAGES.indexOf(stageNow));
   const last = labels.length - 1;
 
   return '<div class="trail">' + labels.map(function(label, i){
@@ -1759,7 +1761,13 @@ const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbymyYS88tLegXCZ
 // Tracking columns this dashboard owns and creates, appended after whatever
 // columns the form itself produced. Must match STAGE_COLUMNS in the Apps Script.
 const TRACKING_COLUMNS = ["Fulfilled", "Notes", "Stage", "Message to Student"];
-const STAGES = ["Received", "In review", "Approved", "Complete"];
+const STAGES = ["Received", "In progress", "Complete"];
+// "In review" and "Approved" used to be separate steps. Rows saved before they
+// were merged still carry the old words, so they are read as "In progress".
+function normalizeStage(s){
+  s = String(s || "").trim();
+  return (s === "In review" || s === "Approved") ? "In progress" : s;
+}
 // Two more values end a request without completing it. They are NOT in the Stage
 // dropdown -- they're set by the "Can't fulfill" and "Remove" actions only.
 const STAGE_UNABLE = "Unable to fulfill";
@@ -1779,6 +1787,7 @@ const ATTENDANCE_HEADER_SCAN_ROWS = 15;
 // Exact option strings the PY27 form writes.
 const ROLE_ADVISEE = "I am an Advisee";
 const TYPE_SENIOR_FUNDS = "I am requesting to use my senior funds";
+const TYPE_PARTNER_WAIVER = "I am requesting a college application fee waiver for a BRYC partner school";
 
 /* ---------------------------------------------------------------------------
  * Columns are resolved BY HEADER TEXT, never by position -- the response layout
@@ -1929,7 +1938,16 @@ function resolveColumns(headers){
 }
 
 function requestTypeOf(r){
-  return r.role === ROLE_ADVISEE ? r.adviseeSupport : r.fellowSupport;
+  const t = r.role === ROLE_ADVISEE ? r.adviseeSupport : r.fellowSupport;
+  // The form files a partner-school fee waiver under "use my senior funds" (the
+  // separate waiver option is never picked), so tell them apart by the answer
+  // to "Have you completed an application to a BRYC partner school?".
+  if(t === TYPE_SENIOR_FUNDS && isPartnerWaiverAnswer(r)) return TYPE_PARTNER_WAIVER;
+  return t;
+}
+function isPartnerWaiverAnswer(r){
+  if(/^yes\b/i.test(String(r.partnerApplied || "").trim())) return true;
+  return String(r.partnerSchool || "").trim() !== "" && !String(r.feeType || "").trim();
 }
 function filterKeyOf(r){
   const t = requestTypeOf(r);
@@ -1938,7 +1956,7 @@ function filterKeyOf(r){
   if(t === "I am requesting College Aid Pro access") return "college_aid_pro";
   if(t === "I am requesting a UWorld account") return "uworld";
   if(t === "I am requesting a MasteryPrep login for ACT support") return "masteryprep";
-  if(t === "I am requesting a college application fee waiver for a BRYC partner school") return "partner_waiver";
+  if(t === TYPE_PARTNER_WAIVER) return "partner_waiver";
   return "other";
 }
 /** True when BRYC actually pays money for this request. */
@@ -2505,7 +2523,7 @@ function rowToResponse(row, sheetRow){
   };
   r.fulfilled = String(g("Fulfilled") || "").toUpperCase() === "TRUE";
   r.notes = g("Notes") || "";
-  const rawStage = String(g("Stage") || "").trim();
+  const rawStage = normalizeStage(g("Stage"));
   r.stage = ALL_STAGES.indexOf(rawStage) > -1 ? rawStage : (r.fulfilled ? "Complete" : "Received");
   r.messageToStudent = g("Message to Student") || "";
   return r;

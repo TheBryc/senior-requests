@@ -87,7 +87,14 @@ const DEFAULT_STARTING_FUNDS = 150;
 // everywhere (queue, student portal) and never emails anybody.
 const STAGE_DECLINED = 'Unable to fulfill';
 const STAGE_REMOVED = 'Removed';
-const PORTAL_STAGES = ['Received', 'In review', 'Approved', 'Complete', STAGE_DECLINED, STAGE_REMOVED];
+const PORTAL_STAGES = ['Received', 'In progress', 'Complete', STAGE_DECLINED, STAGE_REMOVED];
+
+// "In review" and "Approved" used to be separate steps. Rows saved before they
+// were merged still carry the old words, so they are read as "In progress".
+function normalizeStage_(stage) {
+  const s = String(stage || '').trim();
+  return (s === 'In review' || s === 'Approved') ? 'In progress' : s;
+}
 
 const STAGE_COLUMNS = ['Fulfilled', 'Notes', 'Stage', 'Message to Student'];
 
@@ -247,7 +254,17 @@ function str_(row, map, key) {
 function requestTypeOf_(row, map) {
   const role = str_(row, map, 'role');
   const t = role === ROLE_ADVISEE ? str_(row, map, 'adviseeSupport') : str_(row, map, 'fellowSupport');
-  return t || str_(row, map, 'fellowSupport') || str_(row, map, 'adviseeSupport');
+  const type = t || str_(row, map, 'fellowSupport') || str_(row, map, 'adviseeSupport');
+  // The form files a partner-school fee waiver under "use my senior funds" (the
+  // separate waiver option is never picked), so tell them apart by the answer to
+  // "Have you completed an application to a BRYC partner school?".
+  if (type === TYPE_SENIOR_FUNDS && isPartnerWaiverAnswer_(row, map)) return TYPE_PARTNER_WAIVER;
+  return type;
+}
+
+function isPartnerWaiverAnswer_(row, map) {
+  if (/^yes\b/i.test(str_(row, map, 'partnerApplied'))) return true;
+  return str_(row, map, 'partnerSchool') !== '' && str_(row, map, 'feeType') === '';
 }
 
 /** True when BRYC actually pays money for this request. */
@@ -470,7 +487,8 @@ function buildPortalData_(email) {
 
       const fulfilled = String(cell_(row, map, '_Fulfilled') || '').toUpperCase() === 'TRUE';
       const rawStage = String(cell_(row, map, '_Stage') || '').trim();
-      const stage = PORTAL_STAGES.indexOf(rawStage) > -1 ? rawStage : (fulfilled ? 'Complete' : 'Received');
+      const normStage = normalizeStage_(rawStage);
+      const stage = PORTAL_STAGES.indexOf(normStage) > -1 ? normStage : (fulfilled ? 'Complete' : 'Received');
 
       const ts = row[0];
       requests.push({
@@ -737,13 +755,12 @@ function composeNotification_(row, map, kind) {
   } else if (kind === 'stage') {
     // Progress update. "Complete" is deliberately NOT handled here -- that goes
     // out as the richer 'fulfilled' email instead, so nobody gets both.
-    const stage = String(cell_(row, map, '_Stage') || '').trim();
+    const stage = normalizeStage_(cell_(row, map, '_Stage'));
     const lines = {
-      'Received':  'We have your ' + kindOf + ' and it is in the queue. Your counselor will review it shortly.',
-      'In review': 'Your ' + kindOf + ' is being reviewed by your BRYC counselor now.',
-      'Approved':  isPaymentRequest_(row, map)
-                     ? 'Your ' + kindOf + ' has been approved. BRYC is arranging the payment now -- you do not need to pay anything yourself.'
-                     : 'Your ' + kindOf + ' has been approved and is being arranged now.'
+      'Received':    'We have your ' + kindOf + ' and it is in the queue. Your counselor will review it shortly.',
+      'In progress': isPaymentRequest_(row, map)
+                       ? 'Your ' + kindOf + ' is being worked on by your BRYC counselor. BRYC will arrange the payment -- you do not need to pay anything yourself.'
+                       : 'Your ' + kindOf + ' is being worked on by your BRYC counselor now.'
     };
     if (!lines[stage]) {
       return { error: 'No update email is sent for the stage "' + stage + '".' };
@@ -758,14 +775,36 @@ function composeNotification_(row, map, kind) {
     return { error: 'Unknown notification type.' };
   }
 
-  return { to: to, subject: subject, body: body };
+  return { to: to, cc: ccFor_(row, map, to), subject: subject, body: body };
+}
+
+/**
+ * The student's BRYC counselor, to copy on anything the student is emailed.
+ * Built from the first name in the form's counselor answer ("Ms. Rachel
+ * (counselor)" -> rachel@thebryc.org), and only for staff who can be picked on
+ * the form -- an unrecognised answer is skipped rather than guessed at.
+ */
+const CC_STAFF = ['rachel', 'catherine', 'kirsten', 'rhonda', 'tavidee', 'tim', 'richard', 'jakia', 'aareena'];
+
+function counselorEmail_(row, map) {
+  const m = str_(row, map, 'counselor').match(/^(?:Ms\.|Mr\.|Mrs\.|Dr\.)?\s*([A-Za-z]+)/);
+  const first = m ? m[1].toLowerCase() : '';
+  return CC_STAFF.indexOf(first) > -1 ? first + '@' + ADMIN_EMAIL_DOMAIN : '';
+}
+
+/** The CC address for a message, unless it would just duplicate the recipient. */
+function ccFor_(row, map, to) {
+  const cc = counselorEmail_(row, map);
+  return cc && cc !== normalizeEmail_(to) ? cc : '';
 }
 
 function sendNotification_(row, map, kind, sentBy) {
   const msg = composeNotification_(row, map, kind);
   if (msg.error) return { status: 'error', message: msg.error };
   try {
-    MailApp.sendEmail({ to: msg.to, name: SENDER_NAME, subject: msg.subject, body: msg.body });
+    const mail = { to: msg.to, name: SENDER_NAME, subject: msg.subject, body: msg.body };
+    if (msg.cc) mail.cc = msg.cc;
+    MailApp.sendEmail(mail);
   } catch (err) {
     console.error('Student notification failed: ' + err);
     return { status: 'error', message: 'The email could not be sent.' };
@@ -798,7 +837,7 @@ const NOTIFIED_HEADER = 'Notified';
 /** What the student has been told, as one comparable string. */
 function notificationSignature_(row, map) {
   const fulfilled = String(cell_(row, map, '_Fulfilled') || '').toUpperCase() === 'TRUE';
-  const stage = String(cell_(row, map, '_Stage') || '').trim();
+  const stage = normalizeStage_(cell_(row, map, '_Stage'));
   const message = String(cell_(row, map, '_MessagetoStudent') || '').trim();
   return (fulfilled ? 'FULFILLED' : (stage || 'Received')) + '||' + message;
 }
@@ -807,7 +846,9 @@ function notificationSignature_(row, map) {
 function kindForChange_(prev, next) {
   const p = String(prev).split('||');
   const n = String(next).split('||');
-  const pState = p[0] || '', nState = n[0] || '';
+  // Compare merged stage names, so a row still saying "Approved" is not
+  // treated as changed once that step became "In progress".
+  const pState = normalizeStage_(p[0]), nState = normalizeStage_(n[0]);
   const pMsg = p.slice(1).join('||'), nMsg = n.slice(1).join('||');
   // Removing a request, or putting one back, never emails anybody.
   if (nState === STAGE_REMOVED || pState === STAGE_REMOVED) return null;
@@ -926,7 +967,7 @@ function removeNotificationSweep() {
  * ------------------------------------------------------------------------ */
 const COMMS_SHEET = 'Comms Log';
 const COMMS_HEADERS = ['When', 'Student', 'Email', 'Request Type', 'Notification',
-                       'Subject', 'Sent By', 'Message'];
+                       'Subject', 'Sent By', 'Message', 'CC'];
 
 function commsSheet_() {
   const ss = tracker_();
@@ -965,7 +1006,8 @@ function logComm_(row, map, kind, msg, sentBy) {
     COMMS_LABELS[kind] || kind,
     msg.subject,
     sentBy || 'Automatic',
-    msg.body                 // exactly what the student received, word for word
+    msg.body,                // exactly what the student received, word for word
+    msg.cc || ''             // the counselor copied on it
   ]);
 }
 
@@ -1453,16 +1495,14 @@ function onFormSubmit(e) {
       + portalLinkLine_()
       + '\nYou will hear from us again as it moves along.\n\nThe BRYC Team';
 
-    MailApp.sendEmail({
-      to: to,
-      name: SENDER_NAME,
-      subject: subject,
-      body: body
-    });
+    const cc = ccFor_(row, map, to);
+    const mail = { to: to, name: SENDER_NAME, subject: subject, body: body };
+    if (cc) mail.cc = cc;
+    MailApp.sendEmail(mail);
     // This one used to send straight through MailApp and skip the log entirely,
     // so a student's very first email was missing from both the Comms Log and
     // their own "Messages From BRYC" panel. Log it like every other send.
-    try { logComm_(row, map, 'received', { to: to, subject: subject, body: body }, 'Automatic'); }
+    try { logComm_(row, map, 'received', { to: to, cc: cc, subject: subject, body: body }, 'Automatic'); }
     catch (err) { console.error('Comms log write failed: ' + err); }
   } catch (err) {
     // Never let a failed acknowledgement interfere with the submission itself.
